@@ -525,6 +525,9 @@ mod tests {
     #[test]
     fn differential_against_reference_model() {
         const KEYS: usize = 64;
+        // Tombstone-sweep parameters (used after the main drain).
+        const STRESS_KEYS: usize = 1024;
+        const STRESS_BASE: u64 = 1_000_000;
         let mut rng = Rng(0xDEAD_BEEF_1234);
         let mut queue = TimerQueue::new();
         let mut tokens: Vec<Option<Token<u64>>> = vec![None; KEYS];
@@ -593,12 +596,35 @@ mod tests {
 
         // Final full drain must empty both in the same order.
         while let Some(expired) = queue.pop_due(u64::MAX) {
-            let (at, _popped_gen, k) = by_deadline.pop_first().expect("model exhausted early");
+            let (at, _seq_gen, k) = by_deadline.pop_first().expect("model exhausted early");
             assert_eq!(expired.at, at);
             assert_eq!(expired.key, k);
         }
         assert!(by_deadline.is_empty(), "model should be empty after drain");
         assert!(queue.is_empty());
+
+        // Tombstone stress: schedule-then-cancel sweeps over a wide key
+        // range. The map's occupied count stays near zero while tombstones
+        // from many distinct keys accumulate; a growth condition that
+        // ignores tombstones lets the probe table fill and the probes spin
+        // forever (caught as a 600x mixed-workload slowdown before the
+        // fix). The queue must stay empty throughout the sweep.
+        for round in 0..2_000_u64 {
+            for key in 0..STRESS_KEYS {
+                let s_key = STRESS_BASE + u64::try_from(key).expect("key fits u64");
+                let token = queue.schedule(s_key, round % 100, round);
+                assert!(queue.cancel(&token), "sweep cancel must succeed");
+            }
+            assert_eq!(
+                queue.len(),
+                0,
+                "sweep must leave nothing live at round {round}"
+            );
+        }
+        assert!(
+            queue.next_deadline().is_none(),
+            "all sweep entries are stale; deadline must be none"
+        );
     }
 
     /// `&str` keys exercise the non-integer hash path of the generation map.
