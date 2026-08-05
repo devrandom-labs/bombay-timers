@@ -160,7 +160,8 @@ where
         })
     }
 
-    /// Remove stale heap entries once they outnumber the live schedules.
+    /// Remove stale heap entries once they outnumber the live schedules and
+    /// release oversized buffers after a full drain.
     ///
     /// Lazy top-of-heap discard bounds nothing: replace-heavy workloads leave
     /// every superseded generation in the heap until it happens to surface.
@@ -169,6 +170,10 @@ where
     /// ~2x live entries. The retained entries are exactly those the discard
     /// loop would eventually pop, so ordering and firing semantics are
     /// unchanged.
+    ///
+    /// When every key has been drained or cancelled, both containers still
+    /// pin the peak capacity; release it so a long-lived queue does not
+    /// retain a workload's peak footprint.
     fn compact(&mut self) {
         // Compaction triggers when stale entries outnumber live ones, i.e.
         // `heap > 2 * live`. Every live key has exactly one heap entry, so
@@ -177,13 +182,16 @@ where
         let Some(stale) = self.heap.len().checked_sub(self.current.len()) else {
             return;
         };
-        if stale <= self.current.len() {
-            return;
+        if stale > self.current.len() {
+            let mut vec = mem::take(&mut self.heap).into_vec();
+            vec.retain(|Reverse(entry)| self.current.get(&entry.key) == Some(&entry.generation));
+            vec.shrink_to_fit();
+            self.heap = BinaryHeap::from(vec);
         }
-        let mut vec = mem::take(&mut self.heap).into_vec();
-        vec.retain(|Reverse(entry)| self.current.get(&entry.key) == Some(&entry.generation));
-        vec.shrink_to_fit();
-        self.heap = BinaryHeap::from(vec);
+        if self.current.is_empty() {
+            self.current.shrink_to_fit();
+            self.heap.shrink_to_fit();
+        }
     }
 
     fn discard_stale(&mut self) {
