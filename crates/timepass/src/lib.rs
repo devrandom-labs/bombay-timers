@@ -427,6 +427,13 @@ where
         }
         let Reverse(entry) = self.heap.pop()?;
         self.current.remove(&entry.key);
+        // Drain-release: once every key is popped the buffers still pin the
+        // peak capacity. `compact()` covers the stale path; this covers the
+        // clean path where `discard_stale` returns before calling it.
+        if self.current.is_empty() {
+            self.current.shrink_to_fit();
+            self.heap.shrink_to_fit();
+        }
         Some(Expired {
             at: entry.at,
             key: entry.key,
@@ -473,22 +480,24 @@ where
 
     #[inline]
     fn discard_stale(&mut self) {
-        self.compact();
         // `stale_possible` is false only when no stale entry can exist, so the
-        // per-pop generation lookup is skipped on the clean path. A live top
-        // does not imply the heap is clean (stale entries lurk deeper), so the
-        // flag clears only when the heap empties or a rebuild removes them.
-        if self.stale_possible {
-            while self
-                .heap
-                .peek()
-                .is_some_and(|entry| self.current.get(&entry.0.key) != Some(&entry.0.generation))
-            {
-                self.heap.pop();
-            }
-            if self.heap.is_empty() {
-                self.stale_possible = false;
-            }
+        // clean path skips both the compaction arithmetic and the per-pop
+        // generation lookup. A live top does not imply the heap is clean
+        // (stale entries lurk deeper), so the flag clears only when the heap
+        // empties or a rebuild removes them.
+        if !self.stale_possible {
+            return;
+        }
+        self.compact();
+        while self
+            .heap
+            .peek()
+            .is_some_and(|entry| self.current.get(&entry.0.key) != Some(&entry.0.generation))
+        {
+            self.heap.pop();
+        }
+        if self.heap.is_empty() {
+            self.stale_possible = false;
         }
     }
 }
