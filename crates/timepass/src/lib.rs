@@ -66,7 +66,7 @@ pub struct Expired<I, K, V> {
 pub struct TimerQueue<I, K, V> {
     heap: BinaryHeap<Reverse<Entry<I, K, V>>>,
     current: FxHashMap<K, u64>,
-    next_generation: u64,
+    nextpopped_generation: u64,
     next_sequence: u64,
 }
 
@@ -83,7 +83,7 @@ impl<I, K, V> TimerQueue<I, K, V> {
         Self {
             heap: BinaryHeap::new(),
             current: FxHashMap::default(),
-            next_generation: 1,
+            nextpopped_generation: 1,
             next_sequence: 0,
         }
     }
@@ -112,9 +112,9 @@ where
     /// Panics if the process exhausts all timer generations or insertion
     /// sequence values.
     pub fn schedule(&mut self, key: K, at: I, value: V) -> Token<K> {
-        let generation = self.next_generation;
-        self.next_generation = self
-            .next_generation
+        let generation = self.nextpopped_generation;
+        self.nextpopped_generation = self
+            .nextpopped_generation
             .checked_add(1)
             .expect("timer generation exhausted");
         let sequence = self.next_sequence;
@@ -215,5 +215,126 @@ where
         {
             self.heap.pop();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::cast_possible_truncation,
+        reason = "tests deliberately truncate u64 RNG outputs to small key/now ranges"
+    )]
+    use super::*;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// Deterministic xorshift64* generator.
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+    }
+
+    /// Differential test: the scheduler against a BTreeSet/BTreeMap reference
+    /// model over a seeded stream of schedules, replaces, cancels, and pops.
+    /// The model orders by `(at, generation)`, which is the queue's
+    /// equal-deadline schedule order (generation increases exactly once per
+    /// schedule).
+    #[test]
+    fn differential_against_reference_model() {
+        const KEYS: usize = 64;
+        let mut rng = Rng(0xDEAD_BEEF_1234);
+        let mut queue = TimerQueue::new();
+        let mut tokens: Vec<Option<Token<u64>>> = vec![None; KEYS];
+        // Reference model: per-key live schedule and a set ordered by deadline.
+        let mut live: BTreeMap<u64, (u64, u64, u64)> = BTreeMap::new(); // key -> (at, gen, value)
+        let mut by_deadline: BTreeSet<(u64, u64, u64)> = BTreeSet::new(); // (at, gen, key)
+        let mut modelpopped_gen = 0_u64;
+
+        for _ in 0..50_000 {
+            let key = (rng.next() % KEYS as u64) as usize;
+            let roll = rng.next() % 10;
+            match roll {
+                0..=5 => {
+                    let at = rng.next() % 100;
+                    let value = rng.next();
+                    let token = queue.schedule(key as u64, at, value);
+                    tokens[key] = Some(token);
+                    modelpopped_gen += 1;
+                    if let Some(old) = live.insert(key as u64, (at, modelpopped_gen, value)) {
+                        by_deadline.remove(&(old.0, old.1, key as u64));
+                    }
+                    by_deadline.insert((at, modelpopped_gen, key as u64));
+                }
+                6..=7 => {
+                    if let Some(token) = tokens[key].as_ref() {
+                        let got = queue.cancel(token);
+                        let expected = live
+                            .get(&(key as u64))
+                            .is_some_and(|&(_, g, _)| g == token.generation);
+                        assert_eq!(got, expected, "cancel mismatch for key {key}");
+                        if got {
+                            tokens[key] = None;
+                            if let Some(old) = live.remove(&(key as u64)) {
+                                by_deadline.remove(&(old.0, old.1, key as u64));
+                            }
+                        }
+                    }
+                }
+                8..=9 => {
+                    let now = rng.next() % 100;
+                    let got = queue.pop_due(now);
+                    let expected = by_deadline.first().copied().filter(|&(at, _, _)| at <= now);
+                    match (got, expected) {
+                        (Some(expired), Some((at, popped_gen, k))) => {
+                            let (_, _, v) = live[&k];
+                            assert_eq!((expired.at, expired.key, expired.value), (at, k, v));
+                            by_deadline.remove(&(at, popped_gen, k));
+                            live.remove(&k);
+                        }
+                        (None, None) => {}
+                        (got, expected) => {
+                            panic!("pop_due mismatch: got {got:?}, expected {expected:?}")
+                        }
+                    }
+                    let nd = queue.next_deadline();
+                    assert_eq!(
+                        nd,
+                        by_deadline.first().map(|&(at, _, _)| at),
+                        "next_deadline mismatch after pop at now={now}"
+                    );
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(queue.len(), live.len(), "live-count mismatch after op");
+        }
+
+        // Final full drain must empty both in the same order.
+        while let Some(expired) = queue.pop_due(u64::MAX) {
+            let (at, _popped_gen, k) = by_deadline.pop_first().expect("model exhausted early");
+            assert_eq!(expired.at, at);
+            assert_eq!(expired.key, k);
+        }
+        assert!(by_deadline.is_empty(), "model should be empty after drain");
+        assert!(queue.is_empty());
+    }
+
+    /// `&str` keys exercise the non-integer hash path of the generation map.
+    #[test]
+    fn str_keys_schedule_replace_cancel_pop() {
+        let mut queue = TimerQueue::new();
+        let old = queue.schedule("actor", 10_u64, "old");
+        let new = queue.schedule("actor", 20, "new");
+        assert!(!queue.cancel(&old));
+        assert_eq!(queue.next_deadline(), Some(20));
+        assert_eq!(queue.pop_due(19), None);
+        assert_eq!(queue.pop_due(20).unwrap().value, "new");
+        assert!(!queue.cancel(&new));
     }
 }
