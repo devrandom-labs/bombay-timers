@@ -204,6 +204,22 @@ verified across the matrix (retained 0 everywhere, peaks identical: the
 drain-release fires on the clean path's last pop and on the stale path
 inside `compact`). Score **+0.9%** (A/B 8.58 vs 8.50 M/s avg). Gate green.
 
+### E15 — Pipelined hole sift (FAILED, reverted; Miri gate discovered)
+The unsafe gate was assumed unreachable ("Miri needs nightly, pinned out") —
+wrong: the repo's `flake.nix` ships `devShells.miri` (nightly + miri). A custom
+binary heap with a hole-based, software-pipelined sift was implemented with
+documented invariants and validated by Loom (frozen gate) and Miri (all 4
+tests clean in 265 s under the interpreter). Design: element carried in a
+register (1 move/level), children's `(at, sequence)` keys carried in
+registers, grandchildren loads issued one level ahead of the min-selection.
+Result: score **−17%** (A/B 8.04 vs 6.70 M/s). The 7 carried key tuples
+(14 registers) plus the 32 B element spill on the M4, and the 4 early
+grandchild loads per level add traffic std avoids. **Third sift attempt lost
+to std's LTO-optimized hole sift** (4-ary −26%, swap-pipeline −34%, this −17%);
+std `BinaryHeap` is the empirical optimum for this workload on this machine.
+The `nix develop .#miri` capability is recorded: unsafe with invariants +
+Loom + Miri evidence is permissible in future work.
+
 ### Session totals
 `score` 4.88 → ~8.1 M/s (+66% nominal; real gains: FxHash ~+15%, LTO ~+7%,
 stale flag ~+2%, remainder machine-state drift). replace peak 706.7 →
