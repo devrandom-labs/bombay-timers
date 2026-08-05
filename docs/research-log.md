@@ -193,6 +193,17 @@ shrink). `len >= threshold` is exactly equivalent to `len + 1 > cap·3/4`
 (A/B 8.22 vs 8.06 M/s avg) — the hot insert drops a capacity load, a
 multiply, and a zero-check. Gate green.
 
+### E14 — Gate `discard_stale`'s compaction on the staleness flag (keep)
+The clean path (fresh schedules, no cancels) ran `compact()` on every pop:
+a `checked_sub`, a staleness comparison, and an emptiness check — pure
+overhead when no stale entry can exist. `discard_stale` now returns
+immediately when `stale_possible` is clear, and the drain-release (shrink
+heap + map when `current` empties) moved into `pop_due`'s removal, where the
+emptiness check runs once per pop anyway. Memory semantics preserved and
+verified across the matrix (retained 0 everywhere, peaks identical: the
+drain-release fires on the clean path's last pop and on the stale path
+inside `compact`). Score **+0.9%** (A/B 8.58 vs 8.50 M/s avg). Gate green.
+
 ### Session totals
 `score` 4.88 → ~8.1 M/s (+66% nominal; real gains: FxHash ~+15%, LTO ~+7%,
 stale flag ~+2%, remainder machine-state drift). replace peak 706.7 →
