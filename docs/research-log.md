@@ -133,6 +133,22 @@ differential test before the gate). Result: +2.2% A/B (7.67/7.68 vs
 8.12/8.09 M avg = **+6.7%**. `lto = "fat"` measured −1% vs thin and was
 reverted.
 
+### E10 — Pipelined custom sift-down (FAILED, reverted)
+Hypothesis: the pop sift is latency-bound (~19 dependent levels ≈ 100 ns of the
+114 ns pop, measured by phase-split probes: schedule 21 ns, pop 114 ns =
+compact 0–3 + peek 1 + sift ~100 + map remove 6 + build 2). A custom binary
+heap carrying `(at, sequence)` keys in registers and issuing the grandchildren
+loads one level ahead (safe Rust, swap-based descent) would hide load latency.
+Result: pop 114 → 164 ns (**+44%**), score 8.1 → 5.4 M/s (−34%). Root cause:
+the swap-based descent costs 3 moves per level (2 loads + 2 stores of 32 B)
+versus std's hole abstraction (1 move per level, `ptr::read`/`write` — unsafe
+internally, gated behind the repo's Loom+Miri rule, and Miri needs nightly,
+which the stable-toolchain pin forbids). The extra memory traffic dominates the
+latency savings. **Lesson: std `BinaryHeap`'s hole sift is the safe-Rust
+ceiling for comparison-based heaps; the sift (~100 ns of the 114 ns pop) is not
+further reducible without unsafe.** Probes also priced the map: insert+remove
+~11 ns of the 135 ns/timer total.
+
 ### Session totals
 `score` 4.88 → ~8.1 M/s (+66% nominal; real gains: FxHash ~+15%, LTO ~+7%,
 stale flag ~+2%, remainder machine-state drift). replace peak 706.7 →
