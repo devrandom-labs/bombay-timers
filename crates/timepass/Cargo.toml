@@ -1,0 +1,18 @@
+[package]
+name = "timepass"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+build = "build.rs"
+[target.'cfg(loom)'.dependencies]
+loom.workspace = true
+[dev-dependencies]
+criterion.workspace = true
+loom.workspace = true
+[[bench]]
+name = "timer_queue"
+harness = false
+[lints]
+workspace = true
+
