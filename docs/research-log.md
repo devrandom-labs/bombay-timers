@@ -149,6 +149,26 @@ ceiling for comparison-based heaps; the sift (~100 ns of the 114 ns pop) is not
 further reducible without unsafe.** Probes also priced the map: insert+remove
 ~11 ns of the 135 ns/timer total.
 
+### E11 — GenMap: purpose-built linear-probe map (keep)
+Replace `FxHashMap<K, u64>` (hashbrown Swiss table) with `GenMap<K>`: three
+parallel arrays (1 B state byte + `Option<K>` + `u64` generation), linear
+probing with tombstones over power-of-two capacity, raw `FxHash` (no h2
+control-byte split). Score **+9–10%** (two same-window A/Bs: 7.91 vs 8.62 M/s
+and 8.50 vs 9.34 M/s) — one state-byte load per probe beats the 16 B SIMD
+control-group scan on the narrow insert/get/remove contract. A single-probe
+`cancel(key, gen)` method replaced get-then-remove: cancel throughput
+98 → 140 M ops/s (+42%). Costs: replace peak 115.7 → 132.4 B/live (+14%, still
+5.3× better than baseline 706), allocs 2–3× (tiny absolute).
+
+**Bug caught by the mixed workload (600× slowdown)**: the growth condition
+counted only occupied entries, so tombstones from many distinct keys could
+fill the probe table (no empty slot ⇒ probes never terminate). Fixed by
+counting tombstones toward the load factor (`len + tombstones + 1 >
+cap·3/4` triggers a rebuild that drops tombstones). The differential test now
+ends with a schedule-then-cancel sweep (1024 keys × 2000 rounds) that provably
+hangs on the buggy condition — verified twice. Lesson: linear-probe tables
+must treat tombstones as occupied for both probe termination and growth.
+
 ### Session totals
 `score` 4.88 → ~8.1 M/s (+66% nominal; real gains: FxHash ~+15%, LTO ~+7%,
 stale flag ~+2%, remainder machine-state drift). replace peak 706.7 →
