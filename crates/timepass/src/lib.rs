@@ -561,7 +561,11 @@ mod tests {
         let mut by_deadline: BTreeSet<(u64, u64, u64)> = BTreeSet::new(); // (at, gen, key)
         let mut modelpopped_gen = 0_u64;
 
-        for _ in 0..50_000 {
+        // Keep the same seeded state machine under Miri, but bound the
+        // interpreter run. Native CI retains the full eight-million-operation
+        // differential plus tombstone sweep.
+        let operations = if cfg!(miri) { 5_000 } else { 50_000 };
+        for _ in 0..operations {
             let key = (rng.next() % KEYS as u64) as usize;
             let roll = rng.next() % 10;
             match roll {
@@ -634,8 +638,10 @@ mod tests {
         // ignores tombstones lets the probe table fill and the probes spin
         // forever (caught as a 600x mixed-workload slowdown before the
         // fix). The queue must stay empty throughout the sweep.
-        for round in 0..2_000_u64 {
-            for key in 0..STRESS_KEYS {
+        let stress_rounds = if cfg!(miri) { 20 } else { 2_000 };
+        let stress_keys = if cfg!(miri) { 64 } else { STRESS_KEYS };
+        for round in 0..stress_rounds {
+            for key in 0..stress_keys {
                 let s_key = STRESS_BASE + u64::try_from(key).expect("key fits u64");
                 let token = queue.schedule(s_key, round % 100, round);
                 assert!(queue.cancel(&token), "sweep cancel must succeed");
