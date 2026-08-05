@@ -3,6 +3,7 @@
 use core::cmp::{Ordering, Reverse};
 use core::hash::Hash;
 use std::collections::{BinaryHeap, HashMap};
+use std::mem;
 
 /// Exact authority over one scheduled generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,7 +160,34 @@ where
         })
     }
 
+    /// Remove stale heap entries once they outnumber the live schedules.
+    ///
+    /// Lazy top-of-heap discard bounds nothing: replace-heavy workloads leave
+    /// every superseded generation in the heap until it happens to surface.
+    /// Once the heap exceeds twice the live count, rebuild it from the
+    /// generation index in O(n) and shrink the buffer, bounding memory to
+    /// ~2x live entries. The retained entries are exactly those the discard
+    /// loop would eventually pop, so ordering and firing semantics are
+    /// unchanged.
+    fn compact(&mut self) {
+        // Compaction triggers when stale entries outnumber live ones, i.e.
+        // `heap > 2 * live`. Every live key has exactly one heap entry, so
+        // `checked_sub` cannot underflow; on the impossible underflow path,
+        // skip compaction (the safe direction).
+        let Some(stale) = self.heap.len().checked_sub(self.current.len()) else {
+            return;
+        };
+        if stale <= self.current.len() {
+            return;
+        }
+        let mut vec = mem::take(&mut self.heap).into_vec();
+        vec.retain(|Reverse(entry)| self.current.get(&entry.key) == Some(&entry.generation));
+        vec.shrink_to_fit();
+        self.heap = BinaryHeap::from(vec);
+    }
+
     fn discard_stale(&mut self) {
+        self.compact();
         while self
             .heap
             .peek()
