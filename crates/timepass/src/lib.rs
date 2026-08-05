@@ -5,6 +5,9 @@ use core::hash::Hash;
 use std::collections::{BinaryHeap, HashMap};
 use std::mem;
 
+/// Schedule interval between heap-compaction checks; a power of two.
+const COMPACT_INTERVAL: u64 = 1024;
+
 /// Exact authority over one scheduled generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token<K> {
@@ -126,6 +129,14 @@ where
             key: key.clone(),
             value,
         }));
+        // Bound the heap while the queue is growing: replace-heavy phases
+        // accumulate stale generations that would otherwise peak at the full
+        // schedule count. The check is amortized over `COMPACT_INTERVAL`
+        // schedules so the fresh-key path pays one AND+branch; the peak bound
+        // then slackens by at most `COMPACT_INTERVAL` entries.
+        if self.next_sequence & (COMPACT_INTERVAL - 1) == 0 {
+            self.compact();
+        }
         Token { key, generation }
     }
 
