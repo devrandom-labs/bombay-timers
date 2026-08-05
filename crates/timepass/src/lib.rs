@@ -75,6 +75,9 @@ struct GenMap<K> {
     gens: Vec<u64>,
     /// Occupied slots.
     len: usize,
+    /// `(capacity() * 3) / 4`, cached so the per-insert growth check is a
+    /// compare instead of a multiply.
+    grow_threshold: usize,
 }
 
 impl<K> Default for GenMap<K> {
@@ -89,6 +92,7 @@ impl<K> GenMap<K> {
             keys: Vec::new(),
             gens: Vec::new(),
             len: 0,
+            grow_threshold: 0,
         }
     }
 
@@ -149,6 +153,7 @@ impl<K> GenMap<K> {
         }
         self.keys = keys;
         self.gens = gens;
+        self.grow_threshold = (self.capacity() * 3) / 4;
     }
 
     fn grow(&mut self)
@@ -167,7 +172,7 @@ impl<K> GenMap<K> {
     where
         K: Eq + Hash,
     {
-        if self.capacity() == 0 || self.len + 1 > (self.capacity() * 3) / 4 {
+        if self.len >= self.grow_threshold {
             self.grow();
         }
         let mask = self.capacity() - 1;
@@ -299,6 +304,7 @@ impl<K> GenMap<K> {
         if self.len == 0 {
             self.keys = Vec::new();
             self.gens = Vec::new();
+            self.grow_threshold = 0;
         }
     }
 }
