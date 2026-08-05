@@ -185,6 +185,14 @@ realistic mixed workload improved). The 4-seed differential caught an
 early-stop bug in the first formulation (breaking the walk at a home-placed
 entry left later entries unreachable); the chain-passes-gap condition fixes it.
 
+### E13 — GenMap cached growth threshold (keep)
+The per-insert growth check recomputed `(capacity() * 3) / 4` on every call;
+cache it as a `grow_threshold` field updated only on rebuild (and reset on
+shrink). `len >= threshold` is exactly equivalent to `len + 1 > cap·3/4`
+(`threshold = 0` on an empty table triggers the first grow). Score **+2.0%**
+(A/B 8.22 vs 8.06 M/s avg) — the hot insert drops a capacity load, a
+multiply, and a zero-check. Gate green.
+
 ### Session totals
 `score` 4.88 → ~8.1 M/s (+66% nominal; real gains: FxHash ~+15%, LTO ~+7%,
 stale flag ~+2%, remainder machine-state drift). replace peak 706.7 →
