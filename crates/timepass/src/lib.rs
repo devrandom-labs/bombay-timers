@@ -2,7 +2,8 @@
 
 use core::cmp::{Ordering, Reverse};
 use core::hash::Hash;
-use std::collections::{BinaryHeap, HashMap};
+use rustc_hash::FxHashMap;
+use std::collections::BinaryHeap;
 use std::mem;
 
 /// Schedule interval between heap-compaction checks; a power of two.
@@ -64,7 +65,7 @@ pub struct Expired<I, K, V> {
 /// Safe reference scheduler using a binary heap and generation index.
 pub struct TimerQueue<I, K, V> {
     heap: BinaryHeap<Reverse<Entry<I, K, V>>>,
-    current: HashMap<K, u64>,
+    current: FxHashMap<K, u64>,
     next_generation: u64,
     next_sequence: u64,
 }
@@ -81,7 +82,7 @@ impl<I, K, V> TimerQueue<I, K, V> {
     pub fn new() -> Self {
         Self {
             heap: BinaryHeap::new(),
-            current: HashMap::new(),
+            current: FxHashMap::default(),
             next_generation: 1,
             next_sequence: 0,
         }
