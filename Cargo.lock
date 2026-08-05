@@ -590,6 +590,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "timepass-harness"
+version = "0.1.0"
+dependencies = [
+ "timepass",
+]
+
+[[package]]
 name = "timepass-perf"
 version = "0.1.0"
 dependencies = [
