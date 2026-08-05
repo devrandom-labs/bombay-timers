@@ -524,11 +524,28 @@ mod tests {
     /// schedule).
     #[test]
     fn differential_against_reference_model() {
+        // Multiple seeds broaden coverage of hash-layout-dependent bugs (the
+        // tombstone load-factor hang was seed-dependent).
+        for seed in [
+            0xDEAD_BEEF_1234_u64,
+            0x00C0_FFEE_0001,
+            0x5EED_5EED_5EED,
+            0x0102_0304_0506,
+        ] {
+            differential_run(seed);
+        }
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the differential test enumerates every op type and phase explicitly"
+    )]
+    fn differential_run(seed: u64) {
         const KEYS: usize = 64;
         // Tombstone-sweep parameters (used after the main drain).
         const STRESS_KEYS: usize = 1024;
         const STRESS_BASE: u64 = 1_000_000;
-        let mut rng = Rng(0xDEAD_BEEF_1234);
+        let mut rng = Rng(seed);
         let mut queue = TimerQueue::new();
         let mut tokens: Vec<Option<Token<u64>>> = vec![None; KEYS];
         // Reference model: per-key live schedule and a set ordered by deadline.
