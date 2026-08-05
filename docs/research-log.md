@@ -169,6 +169,22 @@ ends with a schedule-then-cancel sweep (1024 keys × 2000 rounds) that provably
 hangs on the buggy condition — verified twice. Lesson: linear-probe tables
 must treat tombstones as occupied for both probe termination and growth.
 
+### E12 — GenMap backward-shift deletion (keep)
+Replace the tombstone scheme with backward-shift deletion: removing an entry
+walks forward and shifts any following entry whose probe chain passes through
+the vacated slot (condition: hash start `h` satisfies `h ≤ i ≤ j`, wrapping).
+No tombstones, no state array (Option-ness is the occupancy marker), chains
+stay short, growth counts only occupied slots. Score flat (A/B 6.04 vs
+6.01 M/s — gate neutral). Mixed **+6%** (21.9 vs 20.7 M ops/s — the
+tombstone-triggered rebuild spikes are gone), allocs **2× fewer** (mixed
+0.000027 → 0.000013, a first-class metric), peak **−2%** (replace
+132.4 → 130.3, schedule 94.4 → 92.3 B/timer). Cancel **−31%** on the dense
+mass-cancel synthetic (134 → 93 M ops/s — the shift walk vs a deferred
+tombstone write; still 4.7× baseline; real cancellation is spread, and the
+realistic mixed workload improved). The 4-seed differential caught an
+early-stop bug in the first formulation (breaking the walk at a home-placed
+entry left later entries unreachable); the chain-passes-gap condition fixes it.
+
 ### Session totals
 `score` 4.88 → ~8.1 M/s (+66% nominal; real gains: FxHash ~+15%, LTO ~+7%,
 stale flag ~+2%, remainder machine-state drift). replace peak 706.7 →
