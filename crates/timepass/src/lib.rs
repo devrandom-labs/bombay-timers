@@ -44,6 +44,7 @@ impl<I: Ord, K, V> PartialOrd for Entry<I, K, V> {
     }
 }
 impl<I: Ord, K, V> Ord for Entry<I, K, V> {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.at
             .cmp(&other.at)
@@ -111,6 +112,7 @@ where
     /// # Panics
     /// Panics if the process exhausts all timer generations or insertion
     /// sequence values.
+    #[inline]
     pub fn schedule(&mut self, key: K, at: I, value: V) -> Token<K> {
         let generation = self.nextpopped_generation;
         self.nextpopped_generation = self
@@ -142,6 +144,7 @@ where
     }
 
     /// Cancel exactly the generation named by `token`.
+    #[inline]
     pub fn cancel(&mut self, token: &Token<K>) -> bool {
         if self.current.get(&token.key) == Some(&token.generation) {
             self.current.remove(&token.key);
@@ -152,12 +155,14 @@ where
     }
 
     /// Return the earliest current deadline, removing stale heap entries.
+    #[inline]
     pub fn next_deadline(&mut self) -> Option<I> {
         self.discard_stale();
         self.heap.peek().map(|entry| entry.0.at)
     }
 
     /// Pop one current timer due at or before `now`.
+    #[inline]
     pub fn pop_due(&mut self, now: I) -> Option<Expired<I, K, V>> {
         self.discard_stale();
         if self.heap.peek().is_none_or(|entry| entry.0.at > now) {
@@ -186,6 +191,7 @@ where
     /// When every key has been drained or cancelled, both containers still
     /// pin the peak capacity; release it so a long-lived queue does not
     /// retain a workload's peak footprint.
+    #[inline]
     fn compact(&mut self) {
         // Compaction triggers when stale entries outnumber live ones, i.e.
         // `heap > 2 * live`. Every live key has exactly one heap entry, so
@@ -206,6 +212,7 @@ where
         }
     }
 
+    #[inline]
     fn discard_stale(&mut self) {
         self.compact();
         while self
