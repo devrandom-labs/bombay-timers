@@ -1,8 +1,8 @@
 //! A keyed, generation-safe monotonic timer queue.
 
 use core::cmp::{Ordering, Reverse};
-use core::hash::Hash;
-use rustc_hash::FxHashMap;
+use core::hash::{Hash, Hasher};
+use rustc_hash::FxHasher;
 use std::collections::BinaryHeap;
 use std::mem;
 
@@ -63,10 +63,257 @@ pub struct Expired<I, K, V> {
     pub value: V,
 }
 
+/// Minimal open-addressing map: key -> generation.
+///
+/// Linear probing with tombstones over power-of-two capacity, `FxHash`. The
+/// scheduler only needs `insert`/`get`/`remove`/`len`/`shrink_to_fit` — never
+/// iteration — so a purpose-built probe table beats a Swiss-table `HashMap` on
+/// the hot path: one state-byte load per probe instead of a 16-byte SIMD
+/// control-group scan, at the same `FxHash` cost.
+struct GenMap<K> {
+    /// 0 empty, 1 occupied, 2 tombstone.
+    states: Vec<u8>,
+    keys: Vec<Option<K>>,
+    gens: Vec<u64>,
+    /// Occupied slots, excluding tombstones.
+    len: usize,
+    /// Tombstone slots; they count toward the load factor (a table with no
+    /// empty slot would loop forever in the probes).
+    tombstones: usize,
+}
+
+impl<K> Default for GenMap<K> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<K> GenMap<K> {
+    fn new() -> Self {
+        Self {
+            states: Vec::new(),
+            keys: Vec::new(),
+            gens: Vec::new(),
+            len: 0,
+            tombstones: 0,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    fn capacity(&self) -> usize {
+        self.states.len()
+    }
+
+    fn hash(key: &K) -> u64
+    where
+        K: Hash,
+    {
+        let mut hasher = FxHasher::default();
+        key.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Probe start for `key` under `mask` (capacity minus one, a power of two
+    /// minus one). Truncating the hash to `usize` is deliberate: only the low
+    /// bits select the table slot.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "hash-to-index truncation is inherent to table sizing"
+    )]
+    fn index(key: &K, mask: usize) -> usize
+    where
+        K: Hash,
+    {
+        Self::hash(key) as usize & mask
+    }
+
+    /// Rebuild the table at exactly `capacity` (a power of two, zero allowed).
+    fn rebuild(&mut self, capacity: usize)
+    where
+        K: Hash,
+    {
+        let mut states = vec![0_u8; capacity];
+        let mut keys: Vec<Option<K>> = Vec::with_capacity(capacity);
+        keys.resize_with(capacity, || None);
+        let mut gens = vec![0_u64; capacity];
+        // Reinsert the occupied entries (tombstones are dropped), assigning
+        // into the pre-sized new tables.
+        for (i, slot) in self.keys.drain(..).enumerate() {
+            if self.states[i] == 1 {
+                let Some(key) = slot else {
+                    unreachable!("occupied slot has a key");
+                };
+                let mask = capacity - 1;
+                let mut j = Self::index(&key, mask);
+                while states[j] == 1 {
+                    j = (j + 1) & mask;
+                }
+                states[j] = 1;
+                keys[j] = Some(key);
+                gens[j] = self.gens[i];
+            }
+        }
+        self.states = states;
+        self.keys = keys;
+        self.gens = gens;
+        self.tombstones = 0;
+    }
+
+    fn grow(&mut self)
+    where
+        K: Hash,
+    {
+        let new_cap = if self.capacity() == 0 {
+            4
+        } else {
+            self.capacity() * 2
+        };
+        self.rebuild(new_cap);
+    }
+
+    fn insert(&mut self, key: K, generation: u64) -> Option<u64>
+    where
+        K: Eq + Hash,
+    {
+        // Tombstones occupy slots too: a table without an empty slot would
+        // never terminate the probes.
+        if self.capacity() == 0 || self.len + self.tombstones + 1 > (self.capacity() * 3) / 4 {
+            self.grow();
+        }
+        let mask = self.capacity() - 1;
+        let mut i = Self::index(&key, mask);
+        let mut tombstone = None;
+        loop {
+            match self.states[i] {
+                0 => {
+                    // Place at the first tombstone seen (keeps probe chains
+                    // short) or at this empty slot.
+                    if let Some(t) = tombstone {
+                        self.states[t] = 1;
+                        self.keys[t] = Some(key);
+                        self.gens[t] = generation;
+                        self.tombstones -= 1;
+                    } else {
+                        self.states[i] = 1;
+                        self.keys[i] = Some(key);
+                        self.gens[i] = generation;
+                    }
+                    self.len += 1;
+                    return None;
+                }
+                1 => {
+                    if self.keys[i].as_ref() == Some(&key) {
+                        return Some(mem::replace(&mut self.gens[i], generation));
+                    }
+                }
+                _ => {
+                    if tombstone.is_none() {
+                        tombstone = Some(i);
+                    }
+                }
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    fn get(&self, key: &K) -> Option<&u64>
+    where
+        K: Eq + Hash,
+    {
+        if self.capacity() == 0 {
+            return None;
+        }
+        let mask = self.capacity() - 1;
+        let mut i = Self::index(key, mask);
+        loop {
+            match self.states[i] {
+                0 => return None,
+                1 if self.keys[i].as_ref() == Some(key) => return Some(&self.gens[i]),
+                _ => {}
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    fn remove(&mut self, key: &K) -> Option<u64>
+    where
+        K: Eq + Hash,
+    {
+        if self.capacity() == 0 {
+            return None;
+        }
+        let mask = self.capacity() - 1;
+        let mut i = Self::index(key, mask);
+        loop {
+            match self.states[i] {
+                0 => return None,
+                1 if self.keys[i].as_ref() == Some(key) => {
+                    let generation = self.gens[i];
+                    self.states[i] = 2;
+                    self.keys[i] = None;
+                    self.len -= 1;
+                    self.tombstones += 1;
+                    return Some(generation);
+                }
+                _ => {}
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    /// Remove `key` iff it maps to exactly `generation`, in a single probe
+    /// (the cancel path would otherwise pay get-then-remove, two probes).
+    fn cancel(&mut self, key: &K, generation: u64) -> bool
+    where
+        K: Eq + Hash,
+    {
+        if self.capacity() == 0 {
+            return false;
+        }
+        let mask = self.capacity() - 1;
+        let mut i = Self::index(key, mask);
+        loop {
+            match self.states[i] {
+                0 => return false,
+                1 if self.keys[i].as_ref() == Some(key) => {
+                    if self.gens[i] == generation {
+                        self.states[i] = 2;
+                        self.keys[i] = None;
+                        self.len -= 1;
+                        self.tombstones += 1;
+                        return true;
+                    }
+                    return false;
+                }
+                _ => {}
+            }
+            i = (i + 1) & mask;
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        // The queue only shrinks after a full drain (len == 0), releasing the
+        // whole table.
+        if self.len == 0 {
+            self.states = Vec::new();
+            self.keys = Vec::new();
+            self.gens = Vec::new();
+            self.tombstones = 0;
+        }
+    }
+}
+
 /// Safe reference scheduler using a binary heap and generation index.
 pub struct TimerQueue<I, K, V> {
     heap: BinaryHeap<Reverse<Entry<I, K, V>>>,
-    current: FxHashMap<K, u64>,
+    current: GenMap<K>,
     next_generation: u64,
     next_sequence: u64,
     /// Whether the heap may contain stale (superseded) entries. Stale entries
@@ -89,7 +336,7 @@ impl<I, K, V> TimerQueue<I, K, V> {
     pub fn new() -> Self {
         Self {
             heap: BinaryHeap::new(),
-            current: FxHashMap::default(),
+            current: GenMap::default(),
             next_generation: 1,
             next_sequence: 0,
             stale_possible: false,
@@ -156,8 +403,7 @@ where
     /// Cancel exactly the generation named by `token`.
     #[inline]
     pub fn cancel(&mut self, token: &Token<K>) -> bool {
-        if self.current.get(&token.key) == Some(&token.generation) {
-            self.current.remove(&token.key);
+        if self.current.cancel(&token.key, token.generation) {
             // The cancelled entry remains in the heap until it surfaces.
             self.stale_possible = true;
             true
