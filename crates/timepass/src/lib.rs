@@ -71,15 +71,10 @@ pub struct Expired<I, K, V> {
 /// the hot path: one state-byte load per probe instead of a 16-byte SIMD
 /// control-group scan, at the same `FxHash` cost.
 struct GenMap<K> {
-    /// 0 empty, 1 occupied, 2 tombstone.
-    states: Vec<u8>,
     keys: Vec<Option<K>>,
     gens: Vec<u64>,
-    /// Occupied slots, excluding tombstones.
+    /// Occupied slots.
     len: usize,
-    /// Tombstone slots; they count toward the load factor (a table with no
-    /// empty slot would loop forever in the probes).
-    tombstones: usize,
 }
 
 impl<K> Default for GenMap<K> {
@@ -91,11 +86,9 @@ impl<K> Default for GenMap<K> {
 impl<K> GenMap<K> {
     fn new() -> Self {
         Self {
-            states: Vec::new(),
             keys: Vec::new(),
             gens: Vec::new(),
             len: 0,
-            tombstones: 0,
         }
     }
 
@@ -108,7 +101,7 @@ impl<K> GenMap<K> {
     }
 
     fn capacity(&self) -> usize {
-        self.states.len()
+        self.keys.len()
     }
 
     fn hash(key: &K) -> u64
@@ -134,36 +127,28 @@ impl<K> GenMap<K> {
         Self::hash(key) as usize & mask
     }
 
-    /// Rebuild the table at exactly `capacity` (a power of two, zero allowed).
+    /// Rebuild the table at exactly `capacity` (a power of two, zero allowed),
+    /// reinserting the occupied entries.
     fn rebuild(&mut self, capacity: usize)
     where
         K: Hash,
     {
-        let mut states = vec![0_u8; capacity];
         let mut keys: Vec<Option<K>> = Vec::with_capacity(capacity);
         keys.resize_with(capacity, || None);
         let mut gens = vec![0_u64; capacity];
-        // Reinsert the occupied entries (tombstones are dropped), assigning
-        // into the pre-sized new tables.
         for (i, slot) in self.keys.drain(..).enumerate() {
-            if self.states[i] == 1 {
-                let Some(key) = slot else {
-                    unreachable!("occupied slot has a key");
-                };
+            if let Some(key) = slot {
                 let mask = capacity - 1;
                 let mut j = Self::index(&key, mask);
-                while states[j] == 1 {
+                while keys[j].is_some() {
                     j = (j + 1) & mask;
                 }
-                states[j] = 1;
                 keys[j] = Some(key);
                 gens[j] = self.gens[i];
             }
         }
-        self.states = states;
         self.keys = keys;
         self.gens = gens;
-        self.tombstones = 0;
     }
 
     fn grow(&mut self)
@@ -182,42 +167,23 @@ impl<K> GenMap<K> {
     where
         K: Eq + Hash,
     {
-        // Tombstones occupy slots too: a table without an empty slot would
-        // never terminate the probes.
-        if self.capacity() == 0 || self.len + self.tombstones + 1 > (self.capacity() * 3) / 4 {
+        if self.capacity() == 0 || self.len + 1 > (self.capacity() * 3) / 4 {
             self.grow();
         }
         let mask = self.capacity() - 1;
         let mut i = Self::index(&key, mask);
-        let mut tombstone = None;
         loop {
-            match self.states[i] {
-                0 => {
-                    // Place at the first tombstone seen (keeps probe chains
-                    // short) or at this empty slot.
-                    if let Some(t) = tombstone {
-                        self.states[t] = 1;
-                        self.keys[t] = Some(key);
-                        self.gens[t] = generation;
-                        self.tombstones -= 1;
-                    } else {
-                        self.states[i] = 1;
-                        self.keys[i] = Some(key);
-                        self.gens[i] = generation;
-                    }
+            match &self.keys[i] {
+                None => {
+                    self.keys[i] = Some(key);
+                    self.gens[i] = generation;
                     self.len += 1;
                     return None;
                 }
-                1 => {
-                    if self.keys[i].as_ref() == Some(&key) {
-                        return Some(mem::replace(&mut self.gens[i], generation));
-                    }
+                Some(k) if k == &key => {
+                    return Some(mem::replace(&mut self.gens[i], generation));
                 }
-                _ => {
-                    if tombstone.is_none() {
-                        tombstone = Some(i);
-                    }
-                }
+                Some(_) => {}
             }
             i = (i + 1) & mask;
         }
@@ -233,13 +199,46 @@ impl<K> GenMap<K> {
         let mask = self.capacity() - 1;
         let mut i = Self::index(key, mask);
         loop {
-            match self.states[i] {
-                0 => return None,
-                1 if self.keys[i].as_ref() == Some(key) => return Some(&self.gens[i]),
-                _ => {}
+            match self.keys[i] {
+                None => return None,
+                Some(ref k) if k == key => return Some(&self.gens[i]),
+                Some(_) => {}
             }
             i = (i + 1) & mask;
         }
+    }
+
+    /// Remove the entry at the probed slot `i`, shifting any following entries
+    /// whose probe chain runs through the vacated slot one step back. This
+    /// needs no tombstones: the table only ever holds `Some` (occupied) and
+    /// `None` (empty), so probes always terminate and the load factor counts
+    /// only occupied slots.
+    fn delete_at(&mut self, i: usize, mask: usize)
+    where
+        K: Hash,
+    {
+        let mut i = i;
+        // Walk forward from the gap. An entry at `j` must shift back into the
+        // gap iff its probe chain (from its hash slot `h`) passes through the
+        // gap `i`; otherwise it stays and the walk continues, because entries
+        // further along may still chain through the gap.
+        let mut j = (i + 1) & mask;
+        while let Some(k) = &self.keys[j] {
+            let h = Self::index(k, mask);
+            let passes_gap = if h <= j {
+                h <= i && i <= j
+            } else {
+                // The chain wraps: it covers `h..=mask` and `0..=j`.
+                i >= h || i <= j
+            };
+            if passes_gap {
+                self.keys[i] = self.keys[j].take();
+                self.gens[i] = self.gens[j];
+                i = j;
+            }
+            j = (j + 1) & mask;
+        }
+        self.keys[i] = None;
     }
 
     fn remove(&mut self, key: &K) -> Option<u64>
@@ -252,17 +251,15 @@ impl<K> GenMap<K> {
         let mask = self.capacity() - 1;
         let mut i = Self::index(key, mask);
         loop {
-            match self.states[i] {
-                0 => return None,
-                1 if self.keys[i].as_ref() == Some(key) => {
+            match &self.keys[i] {
+                None => return None,
+                Some(k) if k == key => {
                     let generation = self.gens[i];
-                    self.states[i] = 2;
-                    self.keys[i] = None;
                     self.len -= 1;
-                    self.tombstones += 1;
+                    self.delete_at(i, mask);
                     return Some(generation);
                 }
-                _ => {}
+                Some(_) => {}
             }
             i = (i + 1) & mask;
         }
@@ -280,19 +277,17 @@ impl<K> GenMap<K> {
         let mask = self.capacity() - 1;
         let mut i = Self::index(key, mask);
         loop {
-            match self.states[i] {
-                0 => return false,
-                1 if self.keys[i].as_ref() == Some(key) => {
+            match &self.keys[i] {
+                None => return false,
+                Some(k) if k == key => {
                     if self.gens[i] == generation {
-                        self.states[i] = 2;
-                        self.keys[i] = None;
                         self.len -= 1;
-                        self.tombstones += 1;
+                        self.delete_at(i, mask);
                         return true;
                     }
                     return false;
                 }
-                _ => {}
+                Some(_) => {}
             }
             i = (i + 1) & mask;
         }
@@ -302,10 +297,8 @@ impl<K> GenMap<K> {
         // The queue only shrinks after a full drain (len == 0), releasing the
         // whole table.
         if self.len == 0 {
-            self.states = Vec::new();
             self.keys = Vec::new();
             self.gens = Vec::new();
-            self.tombstones = 0;
         }
     }
 }
