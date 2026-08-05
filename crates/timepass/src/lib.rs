@@ -67,8 +67,14 @@ pub struct Expired<I, K, V> {
 pub struct TimerQueue<I, K, V> {
     heap: BinaryHeap<Reverse<Entry<I, K, V>>>,
     current: FxHashMap<K, u64>,
-    nextpopped_generation: u64,
+    next_generation: u64,
     next_sequence: u64,
+    /// Whether the heap may contain stale (superseded) entries. Stale entries
+    /// are created only by replacing or cancelling a live schedule and are
+    /// removed entirely by a compaction rebuild, so the flag tracks exactly
+    /// those transitions. When `false`, `discard_stale` skips its per-pop
+    /// generation lookup entirely.
+    stale_possible: bool,
 }
 
 impl<I, K, V> Default for TimerQueue<I, K, V> {
@@ -84,8 +90,9 @@ impl<I, K, V> TimerQueue<I, K, V> {
         Self {
             heap: BinaryHeap::new(),
             current: FxHashMap::default(),
-            nextpopped_generation: 1,
+            next_generation: 1,
             next_sequence: 0,
+            stale_possible: false,
         }
     }
 
@@ -114,9 +121,9 @@ where
     /// sequence values.
     #[inline]
     pub fn schedule(&mut self, key: K, at: I, value: V) -> Token<K> {
-        let generation = self.nextpopped_generation;
-        self.nextpopped_generation = self
-            .nextpopped_generation
+        let generation = self.next_generation;
+        self.next_generation = self
+            .next_generation
             .checked_add(1)
             .expect("timer generation exhausted");
         let sequence = self.next_sequence;
@@ -124,7 +131,10 @@ where
             .next_sequence
             .checked_add(1)
             .expect("timer sequence exhausted");
-        self.current.insert(key.clone(), generation);
+        if self.current.insert(key.clone(), generation).is_some() {
+            // A replacement: the superseded generation stays in the heap.
+            self.stale_possible = true;
+        }
         self.heap.push(Reverse(Entry {
             at,
             sequence,
@@ -148,6 +158,8 @@ where
     pub fn cancel(&mut self, token: &Token<K>) -> bool {
         if self.current.get(&token.key) == Some(&token.generation) {
             self.current.remove(&token.key);
+            // The cancelled entry remains in the heap until it surfaces.
+            self.stale_possible = true;
             true
         } else {
             false
@@ -205,6 +217,8 @@ where
             vec.retain(|Reverse(entry)| self.current.get(&entry.key) == Some(&entry.generation));
             vec.shrink_to_fit();
             self.heap = BinaryHeap::from(vec);
+            // The rebuild discarded every stale entry.
+            self.stale_possible = false;
         }
         if self.current.is_empty() {
             self.current.shrink_to_fit();
@@ -215,12 +229,21 @@ where
     #[inline]
     fn discard_stale(&mut self) {
         self.compact();
-        while self
-            .heap
-            .peek()
-            .is_some_and(|entry| self.current.get(&entry.0.key) != Some(&entry.0.generation))
-        {
-            self.heap.pop();
+        // `stale_possible` is false only when no stale entry can exist, so the
+        // per-pop generation lookup is skipped on the clean path. A live top
+        // does not imply the heap is clean (stale entries lurk deeper), so the
+        // flag clears only when the heap empties or a rebuild removes them.
+        if self.stale_possible {
+            while self
+                .heap
+                .peek()
+                .is_some_and(|entry| self.current.get(&entry.0.key) != Some(&entry.0.generation))
+            {
+                self.heap.pop();
+            }
+            if self.heap.is_empty() {
+                self.stale_possible = false;
+            }
         }
     }
 }
