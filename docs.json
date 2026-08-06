@@ -1,6 +1,10 @@
 {
   "name": "Bombay Timers",
   "description": "Keyed, generation-safe monotonic timers for Rust.",
+  "logo": {
+    "light": "https://github.com/devrandom-labs/mnesis/raw/refs/heads/main/docs/logo.svg",
+    "dark": "https://github.com/devrandom-labs/mnesis/raw/refs/heads/main/docs/logo.svg"
+  },
   "sidebar": [
     {
       "group": "Guide",
