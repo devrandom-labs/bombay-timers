@@ -104,6 +104,30 @@ fn cancelled_values_held_until_surfaced_then_released() {
     drop(tokens);
 }
 
+/// Each queue carries exactly one small brand allocation.
+#[test]
+fn queue_allocation_cost_is_one_small_brand() {
+    let _serial = SERIAL.lock().expect("serial lock poisoned");
+    let n: i64 = scale(1_000) as i64;
+    let base = live();
+    let queues: Vec<TimerQueue<u64, u64, u64>> = (0..n).map(|_| TimerQueue::new()).collect();
+    let held = live() - base;
+    assert_eq!(queues.len() as i64, n);
+    // Subtract the container: the Vec holds the queue structs by value.
+    let container = n * size_of::<TimerQueue<u64, u64, u64>>() as i64;
+    let marginal = held - container;
+    // One ArcInner (two usize refcounts, ZST payload) per queue: 16 bytes.
+    // Allow generous slack for allocator rounding, but reject any design that
+    // allocates more than a small fixed block per queue.
+    assert!(
+        marginal <= n * 64,
+        "queue brand allocation too large: {marginal} marginal bytes for {n} queues"
+    );
+    drop(queues);
+    let after = live() - base;
+    assert!(after <= n * 8, "brands not released with queues: {after}");
+}
+
 /// Replace-heavy churn must compact: retained bytes after the final drain
 /// stay near zero even though the heap transiently held many stale entries.
 #[test]

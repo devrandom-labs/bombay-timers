@@ -305,12 +305,11 @@ fn cancel_then_reschedule_same_instant() {
     assert!(queue.is_empty());
 }
 
-/// FINDING-001 probe target: tokens carry only `(key, generation)` and no
-/// queue identity, so a token minted by one queue cancels a colliding
-/// generation in another queue. The correct behavior — "exact authority over
-/// one scheduled generation" — requires isolation. See RESEARCH-REPORT.md.
+/// FINDING-001 regression: tokens are branded by their issuing queue, so a
+/// token minted by one queue has no authority in another. Was
+/// `#[ignore = "FINDING-001: cross-queue token cancels a foreign generation"]`
+/// until the Arc-brand fix; now active. See RESEARCH-REPORT.md.
 #[test]
-#[ignore = "FINDING-001: cross-queue token cancels a foreign generation"]
 fn cross_queue_tokens_must_not_cancel() {
     let mut queue_a = TimerQueue::new();
     let mut queue_b = TimerQueue::new();

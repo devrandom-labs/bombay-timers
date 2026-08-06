@@ -1,20 +1,57 @@
 //! A keyed, generation-safe monotonic timer queue.
 
 use core::cmp::{Ordering, Reverse};
+use core::fmt;
 use core::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
 use std::collections::BinaryHeap;
 use std::mem;
+use std::sync::Arc;
 
 /// Schedule interval between heap-compaction checks; a power of two.
 const COMPACT_INTERVAL: u64 = 1024;
 
+/// Unforgeable queue identity. One brand is allocated per [`TimerQueue`] and
+/// shared by every token the queue mints; because tokens hold an `Arc` to
+/// their brand, the brand allocation outlives its queue whenever tokens do,
+/// so a later queue can never occupy the same address and alias its
+/// authority. The type is private and the API exposes no way to construct or
+/// compare brands, so a brand cannot be forged.
+struct QueueBrand;
+
 /// Exact authority over one scheduled generation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Authority is scoped to the issuing queue: a token minted by one
+/// [`TimerQueue`] can never cancel a schedule in another queue, even when key
+/// and generation number coincide.
+#[derive(Clone)]
 pub struct Token<K> {
+    brand: Arc<QueueBrand>,
     key: K,
     generation: u64,
 }
+
+#[allow(
+    clippy::missing_fields_in_debug,
+    reason = "the brand is deliberately opaque: it identifies the issuing queue, not the schedule"
+)]
+impl<K: fmt::Debug> fmt::Debug for Token<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Token")
+            .field("key", &self.key)
+            .field("generation", &self.generation)
+            .finish()
+    }
+}
+
+impl<K: PartialEq> PartialEq for Token<K> {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.brand, &other.brand)
+            && self.key == other.key
+            && self.generation == other.generation
+    }
+}
+impl<K: Eq> Eq for Token<K> {}
 
 impl<K> Token<K> {
     /// Inspect the scheduled key.
@@ -311,6 +348,7 @@ impl<K> GenMap<K> {
 
 /// Safe reference scheduler using a binary heap and generation index.
 pub struct TimerQueue<I, K, V> {
+    brand: Arc<QueueBrand>,
     heap: BinaryHeap<Reverse<Entry<I, K, V>>>,
     current: GenMap<K>,
     next_generation: u64,
@@ -334,6 +372,7 @@ impl<I, K, V> TimerQueue<I, K, V> {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            brand: Arc::new(QueueBrand),
             heap: BinaryHeap::new(),
             current: GenMap::default(),
             next_generation: 1,
@@ -396,12 +435,22 @@ where
         if self.next_sequence & (COMPACT_INTERVAL - 1) == 0 {
             self.compact();
         }
-        Token { key, generation }
+        Token {
+            brand: Arc::clone(&self.brand),
+            key,
+            generation,
+        }
     }
 
     /// Cancel exactly the generation named by `token`.
+    ///
+    /// Tokens are branded by their issuing queue: a token from another queue
+    /// never cancels here, regardless of key and generation.
     #[inline]
     pub fn cancel(&mut self, token: &Token<K>) -> bool {
+        if !Arc::ptr_eq(&self.brand, &token.brand) {
+            return false;
+        }
         if self.current.cancel(&token.key, token.generation) {
             // The cancelled entry remains in the heap until it surfaces.
             self.stale_possible = true;

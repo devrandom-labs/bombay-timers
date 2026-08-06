@@ -150,26 +150,47 @@ None. All campaigns above ran to their stated completion.
 
 ## FINDING-001 — tokens carry no queue identity; cross-queue cancellation succeeds
 
-- **Severity:** low (API authority semantics; no memory unsafety, no
-  single-queue semantic violation). Affects any deployment running more than
-  one `TimerQueue` over a shared key space.
-- **Affected version:** 0.1.0 @ `ecdd03c`.
+**Status: FIXED on this branch** (`fix(timepass): brand tokens with issuing-queue identity`).
+The reproducer `cross_queue_tokens_must_not_cancel` is un-ignored and passes.
+
+- **Severity:** low for single-queue callers; medium for actorpass lifecycle
+  isolation (an old incarnation must never affect a replacement generation).
+- **Affected version:** 0.1.0 @ `ecdd03c` (pre-fix).
 - **Expected:** `Token` is documented as "exact authority over one scheduled
-  generation". Authority over *one* generation implies isolation: a token
-  minted by queue A must not cancel a schedule in queue B, even when key and
-  generation number coincide.
-- **Actual:** `Token<K>` is `(key, generation)` with no queue identity, and
-  both queues start `next_generation` at 1, so the first token minted by queue
-  A cancels the first schedule of the same key in queue B. The cancel path
-  matches `(key, generation)` against B's generation map and succeeds.
-- **Minimized reproducer:** `tests/adversarial.rs::cross_queue_tokens_must_not_cancel`
-  (4 API calls; ignored with `#[ignore = "FINDING-001: ..."]`, asserting the
-  correct isolated behavior).
-- **Reproduction command:**
+  generation", which requires isolation between queue instances.
+- **Actual (pre-fix):** `Token<K>` was `(key, generation)` with no queue
+  identity; both queues start `next_generation` at 1, so queue A's first token
+  cancelled queue B's first schedule of the same key.
+- **Fix:** every `TimerQueue` mints a private `Arc<QueueBrand>` at
+  construction; every token shares it; `cancel` rejects foreign brands via
+  `Arc::ptr_eq` before consulting the generation map. The brand allocation
+  outlives its queue whenever tokens are retained, so allocator-address reuse
+  cannot alias authority; `QueueBrand` is private and unforgeable through the
+  public API; `Token` and `TimerQueue` keep `Send + Sync`. `PartialEq` on
+  tokens now includes brand identity.
+- **Acceptance evidence** (`research/timepass-autoresearch/tests/cross_queue.rs`,
+  all passing, also under Miri): the un-ignored reproducer; 64 queues with
+  identical keys/generations — all 4,032 cross-cancel attempts rejected;
+  10,000-round drop-queue/retain-token/reallocate aliasing probe; cloned
+  foreign tokens; foreign tokens inert across replacement churn past two
+  compaction boundaries and after a full drain; rejected foreign cancel
+  preserves move-only drop-counted values; `Send + Sync` static assertions
+  plus a real cross-thread token round-trip; token size pinned at 24 bytes
+  (+8 over the old pair); per-queue marginal allocation pinned ≤ 64 bytes
+  (measured ~16: one `ArcInner` of two refcounts, ZST payload).
+- **Measured costs:** structural costs are exact and pinned — +8 bytes per
+  token (24 B for `u64` keys, asserted), one 16-byte brand allocation per
+  queue (asserted ≤ 64 B marginal). Throughput deltas from an interleaved
+  A/B (8 pairs, release, `-C target-cpu=native`) — frozen score 7.45M →
+  7.25M/s, cancel synthetic 98.4M → 81.1M/s, mixed 28.0M → 26.9M/s — were
+  measured while the machine's power state varied (battery vs. plugged) and
+  are reported as noise-contaminated per the project owner's assessment, not
+  as established regressions; a clean same-power A/B remains to be run on a
+  plugged-in, idle machine. All retained-after-drain metrics remain 0.
+- **Minimized pre-fix reproducer:** `tests/adversarial.rs::cross_queue_tokens_must_not_cancel`
+  (4 API calls; asserts the correct isolated behavior; fails pre-fix, passes
+  post-fix).
+- **Pre-fix reproduction command (on `ecdd03c`):**
   `cargo test --manifest-path research/timepass-autoresearch/Cargo.toml --test adversarial -- --ignored cross_queue_tokens_must_not_cancel`
   → panics with `FINDING-001: queue A's token cancelled queue B's generation`.
 - **Seed/input:** none required (deterministic 4-call sequence).
-- **Note:** per the campaign rules this is recorded, not fixed. If the
-  intended contract is "tokens are only meaningful for the queue that minted
-  them", the defect is a documentation/specification gap at minimum; the
-  current doc comment claims exact authority, which the type does not enforce.
