@@ -136,11 +136,15 @@ where
     }
 
     fn cancel_stale(&mut self, key: &K) {
-        if let Some(token) = self.stale.get(key).and_then(|retired| retired.last()) {
-            assert!(
-                !self.queue.cancel(token),
-                "stale token for {key:?} cancelled a live generation"
-            );
+        if let Some(retired) = self.stale.get(key) {
+            // Probe the oldest and newest retired tokens: the oldest is where
+            // any generation-aliasing defect would surface first.
+            for token in retired.first().into_iter().chain(retired.last()) {
+                assert!(
+                    !self.queue.cancel(token),
+                    "stale token for {key:?} cancelled a live generation"
+                );
+            }
         }
     }
 

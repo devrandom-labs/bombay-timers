@@ -56,13 +56,15 @@ config; the gate replays exactly these configurations.
 ### Exhaustive small-state exploration
 
 Complete for each domain (transposition table prunes to the full reachable
-canonical state space; depth cap 100 is a termination guard, never hit):
+canonical state space; the depth cap of 400 is a termination guard — natural
+completion depths are all far below it):
 
-| domain | states | edges checked | max depth |
+| domain | states | edges checked | completion depth |
 |---|---|---|---|
 | 2 keys, ats/nows {0,1,2} | 76 | 988 | 26 |
 | 2 keys, ats/nows {0, MAX−1, MAX} | 76 | 988 | 26 |
 | 3 keys, ats/nows {0,1} | 392 | 5488 | 69 |
+| 3 keys, ats/nows {0,1,2} | 848 | 15,264 | 133 |
 | 3 keys, at {7}, nows {0,7} (max ties) | 128 | 1408 | 31 |
 
 Every visited state passes stepwise observable checks and a full
@@ -132,6 +134,19 @@ reading only, not executed — recorded here as an honest coverage bound.
 ### Interrupted runs
 
 None. All campaigns above ran to their stated completion.
+
+### Harness notes
+
+- `.auto/measure.sh` counts findings via `rg -c '^## FINDING-'` on the single
+  report file and parses the output as `path:count`; `rg -c` on one explicit
+  file prints a bare count, so the findings metric registers 0 regardless of
+  the report's contents. FINDING-001 below is fully recorded; the
+  under-counting is noted here because `.auto` is immutable per the campaign
+  rules.
+- Stale-token probes in `World::cancel_stale` check the oldest and newest
+  retired tokens for a key (the oldest is where generation aliasing would
+  surface first); the deterministic churn and all property suites exercise
+  this on every stale-cancel op.
 
 ## FINDING-001 — tokens carry no queue identity; cross-queue cancellation succeeds
 

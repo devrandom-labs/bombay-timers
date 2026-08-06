@@ -81,7 +81,7 @@ fn walk(
 }
 
 /// Termination guard; the transposition table bounds the real work.
-const MAX_DEPTH: usize = 100;
+const MAX_DEPTH: usize = 400;
 
 #[test]
 fn exhaustive_two_keys_three_instants() {
@@ -127,6 +127,25 @@ fn exhaustive_three_keys_two_instants() {
         stats.states, stats.edges, stats.max_depth
     );
     assert!(stats.states >= 392, "exploration visited fewer states than the known-complete space");
+}
+
+#[cfg(not(miri))]
+#[test]
+fn exhaustive_three_keys_three_instants() {
+    let domain = Domain {
+        keys: vec![0, 1, 2],
+        ats: &[0, 1, 2],
+        nows: &[0, 1, 2],
+    };
+    let stats = explore(&domain, MAX_DEPTH);
+    println!(
+        "three_keys_three_instants: states={} edges={} max_depth={}",
+        stats.states, stats.edges, stats.max_depth
+    );
+    assert!(
+        stats.states >= 392,
+        "exploration visited fewer states than the smaller 3-key domain"
+    );
 }
 
 #[cfg(not(miri))]
