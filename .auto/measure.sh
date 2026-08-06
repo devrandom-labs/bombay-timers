@@ -1,20 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-export RUSTFLAGS="${RUSTFLAGS:-} -C target-cpu=native"
-cargo build -q -p timepass-perf --release
-cargo build -q -p timepass-harness --release
-best=0
-for _ in 1 2 3 4 5; do
-  out=$(./target/release/timepass-perf)
-  score=$(printf '%s\n' "$out" | sed -n 's/^SCORE=//p')
-  if awk -v a="$score" -v b="$best" 'BEGIN { exit !(a>b) }'; then best=$score; fi
-done
-echo "METRIC score=$best unit=timers_per_second"
-
-# The aggregate score is the optimization target, not the whole acceptance
-# surface. Run every deterministic workload so replacement, cancellation,
-# latency tails, memory release, scaling, mixed churn, and contention remain
-# visible on every candidate.
-for workload in schedule replace cancel mixed latency scale concurrent; do
-  ./target/release/timepass-harness "$workload"
-done
+root=research/timepass-autoresearch
+tests=$(rg -g '*.rs' -c '#\[(tokio::)?test' "$root" 2>/dev/null | awk -F: '{n+=$2} END{print n+0}'); properties=$(rg -g '*.rs' -c 'proptest!|quickcheck' "$root" 2>/dev/null | awk -F: '{n+=$2} END{print n+0}'); fuzz=$(find "$root" -path '*/fuzz_targets/*.rs' -type f 2>/dev/null | wc -l | tr -d ' '); findings=$(rg -c '^## FINDING-' "$root/RESEARCH-REPORT.md" 2>/dev/null | awk -F: '{n+=$2} END{print n+0}')
+echo "METRIC score=$((tests + 5*properties + 10*fuzz + 25*findings)) unit=adversarial_evidence"; echo "METRIC tests=$tests"; echo "METRIC properties=$properties"; echo "METRIC fuzz_targets=$fuzz"; echo "METRIC findings=$findings"

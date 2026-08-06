@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-bash .auto/measure.sh
-
+cd "$(dirname "$0")"
+.auto/checks.sh
+.auto/measure.sh

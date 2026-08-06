@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-RUSTFLAGS="--cfg loom -D warnings" LOOM_MAX_PREEMPTIONS=3 cargo test -p timepass --test loom --release
-git diff --quiet baseline -- crates/timepass/tests crates/timepass/benches crates/timepass-perf crates/timepass-harness .auto/checks.sh .auto/measure.sh .auto/prompt.md || {
-  echo "CHECK FAIL: frozen semantics or measurement changed"; exit 1;
-}
+base=$(cat .auto/BASELINE)
+git diff --quiet "$base" -- crates Cargo.toml Cargo.lock README.md docs AGENTS.md || { echo "CHECK FAIL: production changed"; exit 1; }
+git diff --quiet "$base" -- .auto ':!.auto/BASELINE' autoresearch.sh || { echo "CHECK FAIL: research rules changed"; exit 1; }
+if test -f research/timepass-autoresearch/Cargo.toml; then cargo test --manifest-path research/timepass-autoresearch/Cargo.toml --all-targets --no-fail-fast; cargo clippy --manifest-path research/timepass-autoresearch/Cargo.toml --all-targets -- -D warnings; fi
 echo "CHECK OK"
