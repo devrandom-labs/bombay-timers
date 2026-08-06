@@ -1,0 +1,15 @@
+---
+title: Scheduling
+description: Replacement, cancellation, and expiration semantics.
+---
+
+# Scheduling
+
+`schedule(key, at, value)` replaces the current generation for that key and
+returns a token for the new generation. A stale token cannot cancel its
+replacement. Tokens are also branded by their issuing queue, preventing
+cross-queue cancellation when keys and generation counters coincide.
+
+Drive the queue by reading `next_deadline()` and repeatedly calling
+`pop_due(now)`. Equal deadlines expire in insertion order. The queue never
+sleeps or sends messages itself; those policies remain in the adapter.

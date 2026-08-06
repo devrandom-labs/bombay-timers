@@ -1,0 +1,26 @@
+---
+title: Bombay Timers
+description: Keyed, generation-safe monotonic timers for Rust.
+---
+
+# Bombay Timers
+
+Bombay Timers stores one current schedule per key and returns an exact,
+queue-branded cancellation token for each generation.
+
+```rust
+use bombay_timers::TimerQueue;
+
+let mut queue = TimerQueue::new();
+queue.schedule("heartbeat", 100_u64, ());
+assert_eq!(queue.next_deadline(), Some(100));
+assert_eq!(queue.pop_due(100).unwrap().key, "heartbeat");
+```
+
+Use it below an async runtime adapter when you need deterministic scheduling
+semantics without coupling the data structure to Tokio, a wall clock, or a
+delivery channel.
+
+- [Scheduling and replacement](/scheduling)
+- [Correctness and verification](/correctness)
+- [API reference](https://docs.rs/bombay-timers)

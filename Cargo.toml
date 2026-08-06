@@ -1,12 +1,14 @@
 [workspace]
 resolver = "3"
-members = ["crates/timepass", "crates/timepass-perf", "crates/timepass-harness"]
+members = ["crates/timers", "crates/timers-perf", "crates/timers-harness"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.96"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/devrandom-labs/bombay-timers"
+homepage = "https://github.com/devrandom-labs/bombay-timers"
 [workspace.dependencies]
-timepass = { path = "crates/timepass" }
+bombay-timers = { path = "crates/timers" }
 criterion = "0.8"
 loom = "0.7"
 rustc-hash = "2"
@@ -16,4 +18,3 @@ lto = "thin"
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-

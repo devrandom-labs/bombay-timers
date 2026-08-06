@@ -1,0 +1,15 @@
+---
+title: Correctness
+description: Scheduling guarantees and the adversarial verification suite.
+---
+
+# Correctness
+
+Replacement invalidates older tokens, cancellation is exact and idempotent,
+deadlines are monotonic ordered values, and tokens cannot cross queue identity
+boundaries.
+
+The retained `research/timers-tests/` workspace contains differential property
+tests, a bounded exhaustive explorer, deterministic byte campaigns, collision
+models, memory checks, fuzz targets, and replay corpora. See `VERIFICATION.md`
+for commands, bounds, and historical findings.

@@ -7,10 +7,10 @@ baseline, not a preferred algorithm.
 
 ## Baseline — binary heap + HashMap generation index (2026-08-05)
 
-Implementation: `crates/timepass/src/lib.rs` — `BinaryHeap<Reverse<Entry>>`
+Implementation: `crates/timers/src/lib.rs` — `BinaryHeap<Reverse<Entry>>`
 min-heap ordered by `(at, sequence)`, `HashMap<K, u64>` key → current
 generation. Stale entries are lazily discarded from the heap on
-`next_deadline`/`pop_due`. M1 runs of `crates/timepass-harness` (RUSTFLAGS
+`next_deadline`/`pop_due`. M1 runs of `crates/timers-harness` (RUSTFLAGS
 `-C target-cpu=native`, release):
 
 | workload | metric | value |
@@ -48,7 +48,7 @@ Key observations to exploit:
 ## Session 1 — compaction, hashing, and codegen (2026-08-05)
 
 All runs on Apple M4 Pro (aarch64), RUSTFLAGS `-C target-cpu=native`, gate
-`bash .auto/checks.sh` green (fmt, workspace tests, clippy -D warnings, Loom,
+`the Nix verification gate green (fmt, workspace tests, clippy -D warnings, Loom,
 frozen-diff) at every keep. Frozen `score` (1M schedule+fire, best of 5):
 baseline 4.88 M/s.
 

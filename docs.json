@@ -1,0 +1,15 @@
+{
+  "name": "Bombay Timers",
+  "description": "Keyed, generation-safe monotonic timers for Rust.",
+  "sidebar": [
+    {
+      "group": "Guide",
+      "pages": [
+        { "title": "Introduction", "href": "/", "icon": "clock" },
+        { "title": "Scheduling", "href": "/scheduling", "icon": "calendar-plus" },
+        { "title": "Correctness", "href": "/correctness", "icon": "shield-halved" },
+        { "title": "API docs", "href": "https://docs.rs/bombay-timers", "icon": "rust" }
+      ]
+    }
+  ]
+}

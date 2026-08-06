@@ -1,0 +1,17 @@
+[package]
+name = "timers-tests"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+publish = false
+
+# Standalone workspace: the repository root workspace and its lockfile are
+# production and immutable, so this crate opts out and keeps its own lockfile.
+[workspace]
+
+[dependencies]
+bombay-timers = { path = "../../crates/timers" }
+
+[dev-dependencies]
+proptest = "1"

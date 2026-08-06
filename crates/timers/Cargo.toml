@@ -1,0 +1,26 @@
+[package]
+name = "bombay-timers"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "A keyed, generation-safe monotonic timer queue."
+documentation = "https://docs.rs/bombay-timers"
+readme = "../../README.md"
+keywords = ["timer", "scheduler", "queue", "actor"]
+categories = ["data-structures", "concurrency"]
+build = "build.rs"
+[dependencies]
+rustc-hash = { workspace = true }
+[target.'cfg(loom)'.dependencies]
+loom.workspace = true
+[dev-dependencies]
+criterion.workspace = true
+loom.workspace = true
+[[bench]]
+name = "timer_queue"
+harness = false
+[lints]
+workspace = true
