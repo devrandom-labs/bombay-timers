@@ -46,6 +46,8 @@ stale-entry churn, move-only value drops, memory retention and reclamation.
 | `differential_replace_heavy_churn` | 64 | 1500–2500 | 8 keys, schedule-weighted; crosses the 1024-schedule compaction boundary repeatedly |
 | `differential_cancel_heavy` | 256 | 1–600 | 8 keys, cancel-weighted |
 | `differential_colliding_keys` | 256 | 1–300 | 16 constant-hash keys (single probe chain) |
+| `differential_extreme_ties` | 256 | 1–300 | 6 keys, instants only at {0, 1, MAX−1, MAX} — ties decided by sequence at the domain edges |
+| `differential_pop_heavy` | 256 | 1–400 | 8 keys, pop-weighted; constant fill/drain/refill cycling |
 
 All pass. No proptest failure seeds were persisted (no `proptest-regressions`
 files exist). Proptest runs are deterministic for a fixed proptest version and
@@ -68,14 +70,16 @@ drain-order verification. The 3-key domains run natively only (Miri time).
 
 ### Targeted adversarial tests
 
-11 active tests pass: never-early sweeps over 0–64 and {MAX−1, MAX} (including
+14 active tests pass: never-early sweeps over 0–64 and {MAX−1, MAX} (including
 with stale entries lurking below the live deadline), 1000-way equal-deadline
 ordering, replacement reorders to the back at equal deadlines, single-key
 replacement across three compaction boundaries with 3073-token staleness
 replay, deterministic churn (3 fixed seeds × 100,000 model-checked ops; 2,000
 under Miri), 100-generation stale-token inertness, move-only drop accounting
-through replace/cancel/pop and through queue drop, i64 instant extremes, and
-50 fill/drain cycles.
+through replace/cancel/pop and through queue drop, i64 instant extremes, 50
+fill/drain cycles, cloned-token single-use authority, `next_deadline`
+idempotence across stale discards, and cancel-then-reschedule at the same
+instant.
 
 ### Deterministic byte-stream campaign
 

@@ -254,6 +254,57 @@ fn fill_drain_cycles_behave_like_fresh_queue() {
     }
 }
 
+/// A cloned token is one authority: the first cancel succeeds, the clone's
+/// second use fails, and the key stays cancelled between them.
+#[test]
+fn cloned_token_cancels_exactly_once() {
+    let mut queue = TimerQueue::new();
+    let token = queue.schedule("k", 10_u64, "v");
+    let clone = token.clone();
+    assert_eq!(token, clone);
+    assert!(queue.cancel(&token));
+    assert!(!queue.cancel(&clone), "cloned token cancelled twice");
+    assert!(!queue.cancel(&token));
+    assert_eq!(queue.pop_due(u64::MAX), None);
+}
+
+/// `next_deadline` is idempotent and never consumes a live entry.
+#[test]
+fn next_deadline_idempotent_and_non_destructive() {
+    let mut queue = TimerQueue::new();
+    queue.schedule("a", 5_u64, "a");
+    queue.schedule("b", 3, "b");
+    for _ in 0..3 {
+        assert_eq!(queue.next_deadline(), Some(3));
+        assert_eq!(queue.len(), 2);
+    }
+    // Stale entry below the live deadline: idempotent across discard too.
+    let old = queue.schedule("b", 1, "b-stale");
+    let _new = queue.schedule("b", 7, "b-new");
+    assert!(!queue.cancel(&old));
+    for _ in 0..3 {
+        assert_eq!(queue.next_deadline(), Some(5));
+        assert_eq!(queue.len(), 2);
+    }
+    assert_eq!(queue.pop_due(5).expect("due").value, "a");
+    assert_eq!(queue.next_deadline(), Some(7));
+}
+
+/// Cancel then reschedule the same key at the same instant: only the new
+/// generation exists and fires.
+#[test]
+fn cancel_then_reschedule_same_instant() {
+    let mut queue = TimerQueue::new();
+    let t1 = queue.schedule("k", 10_u64, "gen1");
+    assert!(queue.cancel(&t1));
+    let t2 = queue.schedule("k", 10, "gen2");
+    assert!(!queue.cancel(&t1), "cancelled generation revived");
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue.pop_due(10).expect("due").value, "gen2");
+    assert!(!queue.cancel(&t2));
+    assert!(queue.is_empty());
+}
+
 /// FINDING-001 probe target: tokens carry only `(key, generation)` and no
 /// queue identity, so a token minted by one queue cancels a colliding
 /// generation in another queue. The correct behavior — "exact authority over

@@ -111,3 +111,38 @@ proptest! {
         run(&collide_space(16), &ops);
     }
 }
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+    /// Extreme-tie domain: instants only at the four domain edges, so nearly
+    /// every deadline ties and the `(at, sequence)` order is decided by
+    /// sequence alone at 0 and at u64::MAX.
+    #[test]
+    fn differential_extreme_ties(
+        ops in prop::collection::vec(
+            prop_oneof![
+                6 => (0..6usize, prop::sample::select(EXTREMES.to_vec()))
+                    .prop_map(|(key, at)| Op::Schedule { key, at }),
+                2 => (0..6usize).prop_map(|key| Op::CancelCurrent { key }),
+                1 => (0..6usize).prop_map(|key| Op::CancelStale { key }),
+                3 => prop::sample::select(EXTREMES.to_vec()).prop_map(|now| Op::Pop { now }),
+            ],
+            1..=300,
+        )
+    ) {
+        run(&u64_space(6), &ops);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+
+    /// Pop-heavy: drains dominate, so the queue cycles through
+    /// fill/drain/refill constantly, stressing the post-drain shrink path and
+    /// reuse of a fully drained queue.
+    #[test]
+    fn differential_pop_heavy(ops in prop::collection::vec(op_strategy(8, 3, 1, 1, 8), 1..=400)) {
+        run(&u64_space(8), &ops);
+    }
+}
