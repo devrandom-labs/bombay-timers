@@ -24,7 +24,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v30
+        uses: nixbuild/nix-quick-install-action@v35
         with:
           nix_conf: |
             experimental-features = nix-command flakes
