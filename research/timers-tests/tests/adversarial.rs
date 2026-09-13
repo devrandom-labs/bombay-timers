@@ -14,7 +14,7 @@ use timers_tests::{DropLog, Op, Rng, World};
 fn never_early_sweep() {
     for at in 0..=64_u64 {
         let mut queue = TimerQueue::new();
-        queue.schedule("k", at, at);
+        queue.schedule("k", at, at).unwrap();
         if at > 0 {
             assert_eq!(queue.pop_due(at - 1), None, "fired early at {at}");
         }
@@ -24,13 +24,13 @@ fn never_early_sweep() {
     }
     for at in [u64::MAX - 1, u64::MAX] {
         let mut queue = TimerQueue::new();
-        queue.schedule("k", at, at);
+        queue.schedule("k", at, at).unwrap();
         assert_eq!(queue.pop_due(at - 1), None, "fired early at {at}");
         assert_eq!(queue.pop_due(at).expect("must fire").value, at);
     }
     // Zero instant fires immediately at now = 0.
     let mut queue = TimerQueue::new();
-    queue.schedule("k", 0_u64, "zero");
+    queue.schedule("k", 0_u64, "zero").unwrap();
     assert_eq!(queue.pop_due(0).expect("zero instant").value, "zero");
 }
 
@@ -39,8 +39,8 @@ fn never_early_sweep() {
 #[test]
 fn never_early_with_stale_below_live() {
     let mut queue = TimerQueue::new();
-    let old = queue.schedule("k", 5_u64, "old");
-    queue.schedule("k", 10, "new");
+    let old = queue.schedule("k", 5_u64, "old").unwrap();
+    queue.schedule("k", 10, "new").unwrap();
     assert!(!queue.cancel(&old));
     assert_eq!(queue.next_deadline(), Some(10));
     assert_eq!(queue.pop_due(7), None);
@@ -48,8 +48,8 @@ fn never_early_with_stale_below_live() {
     assert_eq!(queue.pop_due(10).expect("due").value, "new");
     // Cancelled earlier deadline must not resurrect.
     let mut queue = TimerQueue::new();
-    let token = queue.schedule("k", 3_u64, "cancelled");
-    queue.schedule("other", 8, "other");
+    let token = queue.schedule("k", 3_u64, "cancelled").unwrap();
+    queue.schedule("other", 8, "other").unwrap();
     assert!(queue.cancel(&token));
     assert_eq!(queue.next_deadline(), Some(8));
     assert_eq!(queue.pop_due(7), None);
@@ -62,7 +62,7 @@ fn equal_deadline_mass_fires_in_schedule_order() {
     let mut queue = TimerQueue::new();
     let n = 1_000_u64;
     for key in 0..n {
-        queue.schedule(key, 42_u64, key);
+        queue.schedule(key, 42_u64, key).unwrap();
     }
     assert_eq!(queue.len(), n as usize);
     for key in 0..n {
@@ -80,10 +80,10 @@ fn equal_deadline_mass_fires_in_schedule_order() {
 #[test]
 fn equal_deadline_replace_moves_to_back() {
     let mut queue = TimerQueue::new();
-    queue.schedule("a", 10_u64, "a1");
-    queue.schedule("b", 10, "b");
-    queue.schedule("c", 10, "c");
-    queue.schedule("a", 10, "a2");
+    queue.schedule("a", 10_u64, "a1").unwrap();
+    queue.schedule("b", 10, "b").unwrap();
+    queue.schedule("c", 10, "c").unwrap();
+    queue.schedule("a", 10, "a2").unwrap();
     let order: Vec<&str> = std::iter::from_fn(|| queue.pop_due(10))
         .map(|expired| expired.value)
         .collect();
@@ -99,7 +99,7 @@ fn replace_past_compaction_boundaries_single_key() {
     let mut tokens = Vec::new();
     for round in 0..3 * 1024_u64 {
         last_at = round % 97;
-        tokens.push(queue.schedule("k", last_at, round));
+        tokens.push(queue.schedule("k", last_at, round).unwrap());
         if round % 512 == 0 {
             assert_eq!(queue.len(), 1, "replacement must keep one live entry");
         }
@@ -151,7 +151,7 @@ fn stale_tokens_inert_across_many_generations() {
     let mut queue = TimerQueue::new();
     let mut tokens = Vec::new();
     for round in 0..100_u64 {
-        tokens.push(queue.schedule("k", 1_000, round));
+        tokens.push(queue.schedule("k", 1_000, round).unwrap());
     }
     for token in &tokens[..99] {
         assert!(!queue.cancel(token));
@@ -172,9 +172,9 @@ fn move_only_values_dropped_exactly_once_lifecycle() {
     let log = Arc::new(DropLog::default());
     {
         let mut queue = TimerQueue::new();
-        let t0 = queue.schedule(0_u64, 5_u64, log.value(0));
-        let _t1 = queue.schedule(1_u64, 5_u64, log.value(1));
-        let t2 = queue.schedule(0_u64, 3_u64, log.value(2)); // replaces value 0
+        let t0 = queue.schedule(0_u64, 5_u64, log.value(0)).unwrap();
+        let _t1 = queue.schedule(1_u64, 5_u64, log.value(1)).unwrap();
+        let t2 = queue.schedule(0_u64, 3_u64, log.value(2)).unwrap(); // replaces value 0
         assert!(!queue.cancel(&t0));
         let fired = queue.pop_due(3).expect("value 2 due");
         assert_eq!(fired.value.id, 2);
@@ -200,9 +200,9 @@ fn move_only_values_dropped_exactly_once_on_queue_drop() {
         let mut queue = TimerQueue::new();
         let mut tokens = Vec::new();
         for key in 0..4_u64 {
-            tokens.push(queue.schedule(key, 100, log.value(key)));
+            tokens.push(queue.schedule(key, 100, log.value(key)).unwrap());
         }
-        tokens.push(queue.schedule(0, 50, log.value(4))); // supersedes value 0
+        tokens.push(queue.schedule(0, 50, log.value(4)).unwrap()); // supersedes value 0
         assert!(queue.cancel(&tokens[1])); // value 1 cancelled, still in heap
         drop(tokens);
     }
@@ -215,9 +215,9 @@ fn move_only_values_dropped_exactly_once_on_queue_drop() {
 #[test]
 fn signed_instant_extremes() {
     let mut queue = TimerQueue::new();
-    queue.schedule("min", i64::MIN, 1_u8);
-    queue.schedule("zero", 0_i64, 2_u8);
-    queue.schedule("max", i64::MAX, 3_u8);
+    queue.schedule("min", i64::MIN, 1_u8).unwrap();
+    queue.schedule("zero", 0_i64, 2_u8).unwrap();
+    queue.schedule("max", i64::MAX, 3_u8).unwrap();
     assert_eq!(queue.next_deadline(), Some(i64::MIN));
     assert_eq!(queue.pop_due(i64::MIN).expect("due").value, 1);
     assert_eq!(queue.pop_due(-1), None, "zero fired early");
@@ -259,7 +259,7 @@ fn fill_drain_cycles_behave_like_fresh_queue() {
 #[test]
 fn cloned_token_cancels_exactly_once() {
     let mut queue = TimerQueue::new();
-    let token = queue.schedule("k", 10_u64, "v");
+    let token = queue.schedule("k", 10_u64, "v").unwrap();
     let clone = token.clone();
     assert_eq!(token, clone);
     assert!(queue.cancel(&token));
@@ -272,15 +272,15 @@ fn cloned_token_cancels_exactly_once() {
 #[test]
 fn next_deadline_idempotent_and_non_destructive() {
     let mut queue = TimerQueue::new();
-    queue.schedule("a", 5_u64, "a");
-    queue.schedule("b", 3, "b");
+    queue.schedule("a", 5_u64, "a").unwrap();
+    queue.schedule("b", 3, "b").unwrap();
     for _ in 0..3 {
         assert_eq!(queue.next_deadline(), Some(3));
         assert_eq!(queue.len(), 2);
     }
     // Stale entry below the live deadline: idempotent across discard too.
-    let old = queue.schedule("b", 1, "b-stale");
-    let _new = queue.schedule("b", 7, "b-new");
+    let old = queue.schedule("b", 1, "b-stale").unwrap();
+    let _new = queue.schedule("b", 7, "b-new").unwrap();
     assert!(!queue.cancel(&old));
     for _ in 0..3 {
         assert_eq!(queue.next_deadline(), Some(5));
@@ -295,9 +295,9 @@ fn next_deadline_idempotent_and_non_destructive() {
 #[test]
 fn cancel_then_reschedule_same_instant() {
     let mut queue = TimerQueue::new();
-    let t1 = queue.schedule("k", 10_u64, "gen1");
+    let t1 = queue.schedule("k", 10_u64, "gen1").unwrap();
     assert!(queue.cancel(&t1));
-    let t2 = queue.schedule("k", 10, "gen2");
+    let t2 = queue.schedule("k", 10, "gen2").unwrap();
     assert!(!queue.cancel(&t1), "cancelled generation revived");
     assert_eq!(queue.len(), 1);
     assert_eq!(queue.pop_due(10).expect("due").value, "gen2");
@@ -313,8 +313,12 @@ fn cancel_then_reschedule_same_instant() {
 fn cross_queue_tokens_must_not_cancel() {
     let mut queue_a = TimerQueue::new();
     let mut queue_b = TimerQueue::new();
-    let token_a = queue_a.schedule("shared-key", 10_u64, "from-a");
-    queue_b.schedule("shared-key", 10_u64, "from-b");
+    let token_a = queue_a
+        .schedule("shared-key", 10_u64, "from-a")
+        .unwrap();
+    queue_b
+        .schedule("shared-key", 10_u64, "from-b")
+        .unwrap();
     // The token minted by queue A must have no authority over queue B.
     assert!(
         !queue_b.cancel(&token_a),

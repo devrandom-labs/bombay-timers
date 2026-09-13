@@ -8,7 +8,7 @@ fn main() {
     let started = Instant::now();
     let mut queue = TimerQueue::new();
     for key in 0..OPERATIONS {
-        queue.schedule(key, u64::from(key % 65_536), key);
+        queue.schedule(key, u64::from(key % 65_536), key).unwrap();
     }
     while let Some(expired) = queue.pop_due(u64::MAX) {
         std::hint::black_box(expired);

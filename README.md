@@ -12,8 +12,8 @@ bombay-timers = "0.1"
 use bombay_timers::TimerQueue;
 
 let mut timers = TimerQueue::new();
-let stale = timers.schedule("retry", 10_u64, "first");
-let current = timers.schedule("retry", 20, "replacement");
+let stale = timers.schedule("retry", 10_u64, "first").unwrap();
+let current = timers.schedule("retry", 20, "replacement").unwrap();
 
 assert!(!timers.cancel(&stale));
 assert_eq!(timers.next_deadline(), Some(20));

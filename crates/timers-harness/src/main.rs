@@ -136,7 +136,7 @@ fn workload_schedule(keys: u64) {
     reset_counters();
     let started = Instant::now();
     for key in 0..keys {
-        queue.schedule(key, key % 65_536, key);
+        queue.schedule(key, key % 65_536, key).unwrap();
     }
     let peak = in_use();
     let mut fires = 0_u64;
@@ -174,11 +174,11 @@ fn workload_replace(keys: u64, replaces: u64) {
     reset_counters();
     let started = Instant::now();
     for key in 0..keys {
-        queue.schedule(key, rng.next() % 1_000_000, key);
+        queue.schedule(key, rng.next() % 1_000_000, key).unwrap();
     }
     for _ in 0..replaces {
         for key in 0..keys {
-            queue.schedule(key, rng.next() % 1_000_000, key);
+            queue.schedule(key, rng.next() % 1_000_000, key).unwrap();
         }
     }
     let peak = in_use();
@@ -218,7 +218,7 @@ fn workload_cancel(keys: u64) {
     let mut queue = TimerQueue::new();
     reset_counters();
     for key in 0..keys {
-        tokens.push(queue.schedule(key, key % 65_536, key));
+        tokens.push(queue.schedule(key, key % 65_536, key).unwrap());
     }
     let started = Instant::now();
     let mut cancels = 0_u64;
@@ -254,19 +254,19 @@ fn workload_cancel(keys: u64) {
 fn workload_latency(keys: u64) {
     let mut queue = TimerQueue::new();
     for key in 0..keys {
-        queue.schedule(key, key, key);
+        queue.schedule(key, key, key).unwrap();
     }
     let mut samples: Vec<u64> = Vec::with_capacity(keys as usize);
     for i in 0..keys {
         let started = Instant::now();
-        queue.schedule(i, i, i);
+        queue.schedule(i, i, i).unwrap();
         samples.push(started.elapsed().as_nanos() as u64);
     }
     report_percentiles("replace", &mut samples);
 
     let mut tokens: Vec<Token<u64>> = Vec::with_capacity(keys as usize);
     for key in 0..keys {
-        tokens.push(queue.schedule(key, key, key));
+        tokens.push(queue.schedule(key, key, key).unwrap());
     }
     let mut samples: Vec<u64> = Vec::with_capacity(keys as usize);
     for token in &tokens {
@@ -277,7 +277,7 @@ fn workload_latency(keys: u64) {
     report_percentiles("cancel", &mut samples);
 
     for key in 0..keys {
-        queue.schedule(key, key, key);
+        queue.schedule(key, key, key).unwrap();
     }
     let mut samples: Vec<u64> = Vec::with_capacity(keys as usize);
     for _ in 0..keys {
@@ -313,7 +313,9 @@ fn workload_mixed(actors: u64, steps: u64) {
         let occupied = state[actor].is_some();
         if roll < 55 {
             let deadline = now.wrapping_add(1 + rng.next() % 1_000);
-            let token = queue.schedule(actor as u64, deadline, actor as u64);
+            let token = queue
+                .schedule(actor as u64, deadline, actor as u64)
+                .unwrap();
             state[actor] = Some(token);
             if occupied {
                 replaces += 1;
@@ -338,7 +340,9 @@ fn workload_mixed(actors: u64, steps: u64) {
         if step % 100_000 == 99_999 {
             for _ in 0..1_000 {
                 let actor = (rng.next() % actors) as usize;
-                let token = queue.schedule(actor as u64, now.wrapping_add(50), actor as u64);
+                let token = queue
+                    .schedule(actor as u64, now.wrapping_add(50), actor as u64)
+                    .unwrap();
                 if state[actor].replace(token).is_some() {
                     replaces += 1;
                 } else {
@@ -386,7 +390,7 @@ fn workload_scale() {
         reset_counters();
         let started = Instant::now();
         for key in 0..keys {
-            queue.schedule(key, key % 65_536, key);
+            queue.schedule(key, key % 65_536, key).unwrap();
         }
         let peak = in_use();
         while let Some(expired) = queue.pop_due(u64::MAX) {
@@ -433,7 +437,8 @@ fn workload_concurrent(threads: usize, ops: u64) {
                             let token = queue
                                 .lock()
                                 .expect("queue mutex poisoned")
-                                .schedule(key, i, key);
+                                .schedule(key, i, key)
+                                .unwrap();
                             schedules += 1;
                             if pending.len() >= 64 {
                                 pending.swap_remove(0);

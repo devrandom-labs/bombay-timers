@@ -125,11 +125,10 @@ crate's own `tests/loom.rs` covers the only shared-state toy protocol present.
 
 ### Generation/sequence exhaustion
 
-Not directly testable: `next_generation`/`next_sequence` are `u64` counters
-advanced once per `schedule` with `checked_add(...).expect(...)`. Reaching the
-panic requires 2^64 schedules ≈ 73,000 years at the measured ~8 M schedules/s
-native rate. The panic-on-exhaustion path is therefore attested by code
-reading only, not executed — recorded here as an honest coverage bound.
+The production crate's unit regressions place each private `u64` counter at
+its limit directly. They verify typed rejection with the complete input,
+unchanged counters and queue state, preservation of an existing replacement
+target, and the exact queue brand on a successful token.
 
 ### Interrupted runs
 
