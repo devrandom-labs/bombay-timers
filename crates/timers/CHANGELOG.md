@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/devrandom-labs/bombay-timers/compare/bombay-timers-v0.1.0...bombay-timers-v0.1.1) - 2026-09-13
+
+### Added
+
+- return typed timer schedule exhaustion ([#6](https://github.com/devrandom-labs/bombay-timers/pull/6))
+
+### Other
+
+- release v0.1.0 ([#1](https://github.com/devrandom-labs/bombay-timers/pull/1))
+
 ## [0.1.0](https://github.com/devrandom-labs/bombay-timers/releases/tag/bombay-timers-v0.1.0) - 2026-08-06
 
 ### Other
