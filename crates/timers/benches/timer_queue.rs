@@ -6,7 +6,7 @@ fn schedule_and_expire(c: &mut Criterion) {
         b.iter(|| {
             let mut queue = TimerQueue::new();
             for key in 0..65_536_u64 {
-                queue.schedule(key, key, key);
+                queue.schedule(key, key, key).unwrap();
             }
             while let Some(expired) = queue.pop_due(u64::MAX) {
                 std::hint::black_box(expired);

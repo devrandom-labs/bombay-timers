@@ -58,7 +58,9 @@ fn memory_released_after_full_drain() {
     {
         let mut queue = TimerQueue::new();
         for key in 0..n {
-            queue.schedule(key, key % 1_000, Box::new([0_u8; 64]));
+            queue
+                .schedule(key, key % 1_000, Box::new([0_u8; 64]))
+                .unwrap();
         }
         let peak = live() - base;
         while queue.pop_due(u64::MAX).is_some() {}
@@ -85,7 +87,11 @@ fn cancelled_values_held_until_surfaced_then_released() {
     let mut queue = TimerQueue::new();
     let mut tokens = Vec::new();
     for key in 0..n {
-        tokens.push(queue.schedule(key, 1_000_000_u64, Box::new([7_u8; 256])));
+        tokens.push(
+            queue
+                .schedule(key, 1_000_000_u64, Box::new([7_u8; 256]))
+                .unwrap(),
+        );
     }
     for token in &tokens {
         assert!(queue.cancel(token));
@@ -137,7 +143,9 @@ fn replace_churn_compacts_and_releases() {
     let base = live();
     let mut queue = TimerQueue::new();
     for round in 0..rounds {
-        queue.schedule("only-key", round % 512, Box::new([1_u8; 128]));
+        queue
+            .schedule("only-key", round % 512, Box::new([1_u8; 128]))
+            .unwrap();
     }
     let fired = queue.pop_due(511).expect("due");
     assert_eq!(fired.at, (rounds - 1) % 512);

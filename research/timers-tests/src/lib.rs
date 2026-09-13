@@ -95,7 +95,7 @@ where
     fn schedule(&mut self, key: K, at: u64) {
         let seq = self.seq;
         self.seq += 1;
-        let token = self.queue.schedule(key.clone(), at, seq);
+        let token = self.queue.schedule(key.clone(), at, seq).unwrap();
         assert_eq!(token.key(), &key, "token names the wrong key");
         if let Some((old_at, old_seq)) = self.live.insert(key.clone(), (at, seq)) {
             assert!(

@@ -21,7 +21,7 @@ fn many_queues_same_keys_no_cross_authority() {
     // Every queue mints generation 1 for key 7 at the same instant.
     let tokens: Vec<Token<u64>> = queues
         .iter_mut()
-        .map(|queue| queue.schedule(7, 100, 0xBEEF))
+        .map(|queue| queue.schedule(7, 100, 0xBEEF).unwrap())
         .collect();
     for (owner, queue) in queues.iter_mut().enumerate() {
         for (foreign, token) in tokens.iter().enumerate() {
@@ -47,13 +47,13 @@ fn dropped_queue_token_cannot_alias_new_queue() {
     for round in 0..10_000 {
         let token = {
             let mut queue_a = TimerQueue::new();
-            let token = queue_a.schedule("k", 10_u64, "from-a");
+            let token = queue_a.schedule("k", 10_u64, "from-a").unwrap();
             assert_eq!(queue_a.len(), 1);
             token
             // queue_a dropped here; its heap and map are freed.
         };
         let mut queue_b = TimerQueue::new();
-        queue_b.schedule("k", 10_u64, "from-b");
+        queue_b.schedule("k", 10_u64, "from-b").unwrap();
         assert!(
             !queue_b.cancel(&token),
             "round {round}: dead queue's token cancelled the new queue"
@@ -67,9 +67,9 @@ fn dropped_queue_token_cannot_alias_new_queue() {
 fn cloned_foreign_tokens_have_no_authority() {
     let mut queue_a = TimerQueue::new();
     let mut queue_b = TimerQueue::new();
-    let token = queue_a.schedule("k", 5_u64, "a");
+    let token = queue_a.schedule("k", 5_u64, "a").unwrap();
     let clone = token.clone();
-    queue_b.schedule("k", 5_u64, "b");
+    queue_b.schedule("k", 5_u64, "b").unwrap();
     assert!(!queue_b.cancel(&token));
     assert!(!queue_b.cancel(&clone));
     // And the clones remain interchangeable at home: one use only.
@@ -82,13 +82,13 @@ fn cloned_foreign_tokens_have_no_authority() {
 #[test]
 fn foreign_tokens_inert_across_replacement_and_compaction() {
     let mut queue_a = TimerQueue::new();
-    let foreign = queue_a.schedule("k", 1_u64, "foreign");
+    let foreign = queue_a.schedule("k", 1_u64, "foreign").unwrap();
     let mut queue_b = TimerQueue::new();
-    queue_b.schedule("k", 1_u64, 0_u64);
+    queue_b.schedule("k", 1_u64, 0_u64).unwrap();
     assert!(!queue_b.cancel(&foreign), "foreign before replacement");
     // Replace past two compaction boundaries.
     for round in 1..=2 * 1024_u64 {
-        queue_b.schedule("k", round, round);
+        queue_b.schedule("k", round, round).unwrap();
     }
     assert!(!queue_b.cancel(&foreign), "foreign after replacement churn");
     let fired = queue_b.pop_due(u64::MAX).expect("due");
@@ -103,10 +103,12 @@ fn foreign_tokens_inert_across_replacement_and_compaction() {
 fn rejected_foreign_cancel_preserves_move_only_value() {
     let log = Arc::new(DropLog::default());
     let mut queue_a = TimerQueue::new();
-    let foreign = queue_a.schedule(0_u64, 10_u64, "token-carrier");
+    let foreign = queue_a
+        .schedule(0_u64, 10_u64, "token-carrier")
+        .unwrap();
     {
         let mut queue_b = TimerQueue::new();
-        queue_b.schedule(0_u64, 10_u64, log.value(1));
+        queue_b.schedule(0_u64, 10_u64, log.value(1)).unwrap();
         assert!(!queue_b.cancel(&foreign));
         let fired = queue_b.pop_due(10).expect("value must survive");
         assert_eq!(fired.value.id, 1);
@@ -127,7 +129,7 @@ fn token_and_queue_remain_send_sync() {
     assert_send_sync::<TimerQueue<u64, u64, u64>>();
 
     let mut queue = TimerQueue::new();
-    let token = queue.schedule("k", 9_u64, "threaded");
+    let token = queue.schedule("k", 9_u64, "threaded").unwrap();
     std::thread::scope(|scope| {
         let handle = scope.spawn(|| {
             assert_eq!(token.key(), &"k");

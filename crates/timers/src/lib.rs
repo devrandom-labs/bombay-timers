@@ -100,6 +100,15 @@ pub struct Expired<I, K, V> {
     pub value: V,
 }
 
+/// A rejected scheduling request, retaining ownership of its complete input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScheduleError<I, K, V> {
+    /// No further timer generation can be represented.
+    GenerationExhausted { key: K, at: I, value: V },
+    /// No further insertion sequence can be represented.
+    SequenceExhausted { key: K, at: I, value: V },
+}
+
 /// Minimal open-addressing map: key -> generation.
 ///
 /// Linear probing with tombstones over power-of-two capacity, `FxHash`. The
@@ -401,21 +410,31 @@ where
 {
     /// Schedule or replace one keyed value.
     ///
-    /// # Panics
-    /// Panics if the process exhausts all timer generations or insertion
-    /// sequence values.
+    /// # Errors
+    ///
+    /// Returns [`ScheduleError::GenerationExhausted`] or
+    /// [`ScheduleError::SequenceExhausted`] with the complete input when the
+    /// corresponding counter has no next value. Rejection leaves the queue
+    /// unchanged.
+    ///
     #[inline]
-    pub fn schedule(&mut self, key: K, at: I, value: V) -> Token<K> {
+    pub fn schedule(
+        &mut self,
+        key: K,
+        at: I,
+        value: V,
+    ) -> Result<Token<K>, ScheduleError<I, K, V>> {
+        let Some(next_generation) = self.next_generation.checked_add(1) else {
+            return Err(ScheduleError::GenerationExhausted { key, at, value });
+        };
+        let Some(next_sequence) = self.next_sequence.checked_add(1) else {
+            return Err(ScheduleError::SequenceExhausted { key, at, value });
+        };
+
         let generation = self.next_generation;
-        self.next_generation = self
-            .next_generation
-            .checked_add(1)
-            .expect("timer generation exhausted");
         let sequence = self.next_sequence;
-        self.next_sequence = self
-            .next_sequence
-            .checked_add(1)
-            .expect("timer sequence exhausted");
+        self.next_generation = next_generation;
+        self.next_sequence = next_sequence;
         if self.current.insert(key.clone(), generation).is_some() {
             // A replacement: the superseded generation stays in the heap.
             self.stale_possible = true;
@@ -435,11 +454,11 @@ where
         if self.next_sequence & (COMPACT_INTERVAL - 1) == 0 {
             self.compact();
         }
-        Token {
+        Ok(Token {
             brand: Arc::clone(&self.brand),
             key,
             generation,
-        }
+        })
     }
 
     /// Cancel exactly the generation named by `token`.
@@ -621,7 +640,7 @@ mod tests {
                 0..=5 => {
                     let at = rng.next() % 100;
                     let value = rng.next();
-                    let token = queue.schedule(key as u64, at, value);
+                    let token = queue.schedule(key as u64, at, value).unwrap();
                     tokens[key] = Some(token);
                     modelpopped_gen += 1;
                     if let Some(old) = live.insert(key as u64, (at, modelpopped_gen, value)) {
@@ -692,7 +711,7 @@ mod tests {
         for round in 0..stress_rounds {
             for key in 0..stress_keys {
                 let s_key = STRESS_BASE + u64::try_from(key).expect("key fits u64");
-                let token = queue.schedule(s_key, round % 100, round);
+                let token = queue.schedule(s_key, round % 100, round).unwrap();
                 assert!(queue.cancel(&token), "sweep cancel must succeed");
             }
             assert_eq!(
@@ -711,12 +730,113 @@ mod tests {
     #[test]
     fn str_keys_schedule_replace_cancel_pop() {
         let mut queue = TimerQueue::new();
-        let old = queue.schedule("actor", 10_u64, "old");
-        let new = queue.schedule("actor", 20, "new");
+        let old = queue.schedule("actor", 10_u64, "old").unwrap();
+        let new = queue.schedule("actor", 20, "new").unwrap();
         assert!(!queue.cancel(&old));
         assert_eq!(queue.next_deadline(), Some(20));
         assert_eq!(queue.pop_due(19), None);
         assert_eq!(queue.pop_due(20).unwrap().value, "new");
         assert!(!queue.cancel(&new));
+    }
+
+    #[test]
+    fn generation_exhaustion_returns_input_and_preserves_queue_state() {
+        let mut queue = TimerQueue::new();
+        let existing = queue
+            .schedule(String::from("existing"), 11_u64, String::from("kept"))
+            .unwrap();
+        queue.next_generation = u64::MAX;
+        queue.next_sequence = 17;
+
+        let error = queue
+            .schedule(String::from("actor"), 23_u64, String::from("payload"))
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            ScheduleError::GenerationExhausted {
+                key: String::from("actor"),
+                at: 23,
+                value: String::from("payload"),
+            }
+        );
+        assert_eq!(queue.next_generation, u64::MAX);
+        assert_eq!(queue.next_sequence, 17);
+        assert_eq!(queue.current.len(), 1);
+        assert_eq!(
+            queue.current.get(existing.key()),
+            Some(&existing.generation)
+        );
+        assert_eq!(queue.heap.len(), 1);
+        assert!(!queue.stale_possible);
+        assert_eq!(
+            queue.pop_due(11),
+            Some(Expired {
+                at: 11,
+                key: String::from("existing"),
+                value: String::from("kept"),
+            })
+        );
+    }
+
+    #[test]
+    fn sequence_exhaustion_returns_input_without_advancing_generation() {
+        let mut queue = TimerQueue::new();
+        queue.next_generation = 41;
+        queue.next_sequence = u64::MAX;
+
+        let error = queue.schedule("actor", 23_u64, "payload").unwrap_err();
+
+        assert_eq!(
+            error,
+            ScheduleError::SequenceExhausted {
+                key: "actor",
+                at: 23,
+                value: "payload",
+            }
+        );
+        assert_eq!(queue.next_generation, 41);
+        assert_eq!(queue.next_sequence, u64::MAX);
+        assert!(queue.current.is_empty());
+        assert!(queue.heap.is_empty());
+        assert!(!queue.stale_possible);
+    }
+
+    #[test]
+    fn failed_replacement_leaves_existing_schedule_current() {
+        let mut queue = TimerQueue::new();
+        let token = queue.schedule("actor", 10_u64, "existing").unwrap();
+        queue.next_sequence = u64::MAX;
+
+        assert_eq!(
+            queue.schedule("actor", 20, "replacement"),
+            Err(ScheduleError::SequenceExhausted {
+                key: "actor",
+                at: 20,
+                value: "replacement",
+            })
+        );
+        assert_eq!(queue.current.get(token.key()), Some(&token.generation));
+        assert_eq!(queue.next_deadline(), Some(10));
+        assert_eq!(
+            queue.pop_due(10),
+            Some(Expired {
+                at: 10,
+                key: "actor",
+                value: "existing",
+            })
+        );
+    }
+
+    #[test]
+    fn successful_schedule_returns_exact_queue_branded_token() {
+        let mut queue = TimerQueue::new();
+
+        let token = queue.schedule("actor", 10_u64, "value").unwrap();
+
+        assert!(Arc::ptr_eq(&token.brand, &queue.brand));
+        assert_eq!(token.key, "actor");
+        assert_eq!(token.generation, 1);
+        assert!(queue.cancel(&token));
     }
 }
