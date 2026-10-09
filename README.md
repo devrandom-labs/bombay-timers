@@ -1,17 +1,15 @@
 # Bombay Timers
 
 `bombay-timers` is a keyed, generation-safe monotonic timer queue. The published
-package is `bombay-timers`; its Rust library name is `timers`.
+package is `bombay-timers`; its Rust library name is `bombay_timers`.
 
 ```toml
 [dependencies]
-bombay-timers = "0.1"
+bombay-timers = "0.2"
 ```
 
 ```rust
-use bombay_timers::TimerQueue;
-
-let mut timers = TimerQueue::new();
+let mut timers = bombay_timers::TimerQueue::new();
 let stale = timers.schedule("retry", 10_u64, "first").unwrap();
 let current = timers.schedule("retry", 20, "replacement").unwrap();
 
@@ -24,6 +22,10 @@ assert!(!timers.cancel(&current));
 Instants are generic ordered values. Clock driving, sleeping, calendar rules,
 and delivery policy belong in adapters. Tokens are queue-branded exact
 cancellation authority, so a token from another queue cannot cancel anything.
+
+When upgrading from 0.1, handle the result of `schedule`. Exhaustion returns
+the complete rejected request in `ScheduleError` without replacing a current
+schedule or issuing a token.
 
 ## Verification
 

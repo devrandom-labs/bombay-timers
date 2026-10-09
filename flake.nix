@@ -36,7 +36,7 @@
         commonArgs = {
           inherit src;
           pname = "bombay-timers";
-          version = "0.1.0";
+          version = (builtins.fromTOML (builtins.readFile ./crates/timers/Cargo.toml)).package.version;
           strictDeps = true;
         };
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
